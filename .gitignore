@@ -37,3 +37,6 @@ tests/stranger.txt
 .DS_Store
 **/.idea/
 **/*.tsbuildinfo
+
+# Image download cache used by scripts/img.sh
+data/img-cache/

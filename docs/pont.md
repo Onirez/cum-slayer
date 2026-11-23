@@ -30,7 +30,8 @@ Le JSON contient notamment :
 
 - `guild_id`, `channel_id`, `message_id`, `is_dm`, `in_agents`, `trigger`
 - `author` (id, nom, `bot`)
-- `content`, `recent` (jusqu’à 10 messages), `referenced`
+- `content`, `recent` (jusqu’à 10 messages), `referenced` (`referenced.images` si le message cité contient une photo)
+- `images` : jusqu’à 4 photos (`url`, `filename`, `content_type`, `width`, `height`, `size`) uniquement si le message mentionne le bot, l’appelle par un alias, répond à un de ses messages, ou est un DM. Jamais pour un autre bot ni un déclencheur ambiant. Fichiers > 10 Mo exclus. Un message peut n’être qu’une photo : il déclenche quand même s’il vise le bot.
 - `mentions` (users, roles, channels)
 - `guild` (salons, rôles, vocal, membre… ; `channels[].agents` pour le périmètre)
 - `memory` (auteur, mentionnés)
@@ -46,6 +47,7 @@ Aucun secret, aucun jeton, aucune URL de webhook n’y figure. Le pont tronque l
 | `scripts/act.sh` | Appel principal : répondre, réagir, écrire la mémoire, créer une skill, proposer un plan d’actions |
 | `scripts/send.sh`, `reply.sh`, `dm.sh`, `embed.sh`, `react.sh` | Secours, un outil à la fois |
 | `scripts/context.sh` | Relire un historique (rarement nécessaire : déjà dans le payload) |
+| `scripts/img.sh` | Télécharger une photo du payload (`img.sh <url>`) depuis le CDN Discord vers `data/img-cache/`, affiche le chemin local (max 10 Mo, 15 s, hôtes `cdn.discordapp.com` / `media.discordapp.net` uniquement ; cache purgé après 24 h) |
 | `scripts/memory.sh`, `skills.sh` | Lecture / écriture fichier |
 | `scripts/user.sh` | Historique et notes par membre : `get`, `history`, `note`, `unnote`, `forget`, `optout` ([détails](memoire-par-user.md)) |
 | `scripts/mod.sh` | Lectures serveur uniquement (`list_roles`, `member_info`, …) |

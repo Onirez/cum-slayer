@@ -18,6 +18,7 @@ const scope = require('./scope');
 const { AGENTS_CATEGORY_ID } = scope;
 const roast = require('./roast');
 const userMem = require('./usermem');
+const images = require('./images');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
 
@@ -484,12 +485,13 @@ async function getReferenced(message) {
   if (!refId) return null;
   try {
     const ref = await message.channel.messages.fetch(refId);
-    return {
+    const out = {
       message_id: ref.id,
       author_id: ref.author?.id || null,
       author: authorName(ref),
       content: truncate(resolveContent(ref), CONTENT_TRUNCATE),
     };
+    return images.withImages(out, ref, true);
   } catch {
     const user = message.mentions.repliedUser;
     return {
@@ -1215,7 +1217,13 @@ client.on('messageCreate', async (message) => {
     startTypingLoop(message.channel);
 
     const referenced = await getReferenced(message);
-    const payload = shrinkPayload({
+    // Photos only when the message is aimed at the bot (mention, alias, reply,
+    // or DM). Never for other bots, never for ambient keyword triggers.
+    const includeImages = images.shouldAttachImages({
+      authorIsBot, mentioned, named, replyToBot, isDm,
+    });
+    if (referenced && !includeImages) delete referenced.images;
+    const payload = {
       guild_id: message.guildId || null,
       channel_id: message.channelId,
       message_id: message.id,
@@ -1236,10 +1244,12 @@ client.on('messageCreate', async (message) => {
       users: loadUserContext(message, client.user?.id, referenced, trigger),
       skills: loadActiveSkills(),
       trigger,
-    });
+    };
+    if (includeImages) images.withImages(payload, message, true);
+    shrinkPayload(payload);
 
     log(
-      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
     );
 
     await postWebhook(payload);
