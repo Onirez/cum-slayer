@@ -21,8 +21,17 @@ const userMem = require('./usermem');
 const images = require('./images');
 const restart = require('./restart');
 const slash = require('./slash');
+const followMod = require('./follow');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
+const followSessions = new followMod.FollowSessions({
+  enabled: config.FOLLOW,
+  windowMs: config.FOLLOW_WINDOW_MS,
+  maxPerWindow: config.FOLLOW_MAX_PER_WINDOW,
+  debounceMs: config.FOLLOW_DEBOUNCE_MS,
+  hourlyMax: config.FOLLOW_HOURLY_MAX,
+  hourlyMs: config.FOLLOW_HOURLY_MS,
+});
 
 const DATA_DIR = config.DATA_DIR;
 const MEMORY_DIR = config.MEMORY_DIR;
@@ -185,7 +194,7 @@ function loadUserContext(message, botId, referenced, trigger) {
   if (!USERMEM_ENABLED || !message.guildId) return null;
   try {
     const author = userMem.contextFor(message.author.id, { limit: USERMEM_AUTHOR_LIMIT, excludeId: message.id, max: 220, role: 'author' });
-    if (USERMEM_THROWBACK && trigger && trigger !== 'daily_roast') {
+    if (USERMEM_THROWBACK && trigger && trigger !== 'daily_roast' && trigger !== 'follow') {
       const tb = userMem.maybeThrowback(message.author.id);
       if (tb) {
         author.throwback = { ...tb, hint: THROWBACK_HINT };
@@ -1129,6 +1138,90 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   scheduleAutoVoice('voiceStateUpdate');
 });
 
+
+/** Slash/command responses (/classement, /fiche, /restart) should not open a follow window. */
+function isSlashResponse(message) {
+  return Boolean(message.interaction || message.interactionMetadata);
+}
+
+async function fireFollow(message) {
+  try {
+    if (!webhookConfigured()) {
+      log('skip webhook POST: ROUTINE_WEBHOOK_URL and/or ROUTINE_WEBHOOK_KEY missing');
+      return;
+    }
+    const isDm = !message.guildId;
+    const inAgents = !isDm && channelInAgents(message.guild, message.channelId);
+    const authorIsBot = Boolean(message.author?.bot);
+    const trigger = 'follow';
+    recordTrigger(message, trigger);
+    log(
+      `trigger=${trigger} user=${message.author.id} username=${message.author.username} channel=${message.channelId} message=${message.id} guild=${message.guildId || 'dm'} is_dm=${isDm} in_agents=${inAgents} author_bot=${authorIsBot}`,
+    );
+    const referenced = await getReferenced(message);
+    const includeImages = images.shouldAttachImages({ authorIsBot, follow: true });
+    if (referenced && !includeImages) delete referenced.images;
+    const payload = {
+      guild_id: message.guildId || null,
+      channel_id: message.channelId,
+      message_id: message.id,
+      is_dm: isDm,
+      in_agents: inAgents,
+      author: {
+        id: message.author.id,
+        username: message.author.username,
+        display_name: authorName(message),
+        bot: authorIsBot,
+      },
+      content: truncate(resolveContent(message), 2000),
+      recent: await recentMessages(message, RECENT_LIMIT),
+      referenced,
+      mentions: compactMentions(message, client.user?.id),
+      guild: compactGuildInfo(message.guildId || [...allowedGuilds][0]),
+      memory: loadPrefetchedMemory(message, client.user?.id),
+      users: loadUserContext(message, client.user?.id, referenced, trigger),
+      skills: loadActiveSkills(),
+      trigger,
+    };
+    if (includeImages) images.withImages(payload, message, true);
+    shrinkPayload(payload);
+    log(
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+    );
+    await postWebhook(payload);
+  } catch (err) {
+    log(`follow handler error: ${err.message}`);
+  }
+}
+
+function maybeScheduleFollow(message, { authorIsBot, isDm }) {
+  if (!followSessions.enabled) return false;
+  if (isDm || authorIsBot) return false;
+  if (USERMEM_ENABLED && typeof userMem.isOptedOut === 'function' && userMem.isOptedOut(message.author.id)) {
+    if (followSessions.isOpen(message.channelId)) {
+      log(`skip follow user=${message.author.id} channel=${message.channelId} message=${message.id} reason=opt-out`);
+    }
+    return false;
+  }
+  const decision = followSessions.schedule({
+    channelId: message.channelId,
+    userId: message.author.id,
+    message,
+    onFire: (msg) => fireFollow(msg),
+    onSkip: (reason, msg) => {
+      log(`skip follow user=${msg.author.id} channel=${msg.channelId} message=${msg.id} reason=${reason}`);
+    },
+  });
+  if (!decision.scheduled) {
+    if (decision.reason && decision.reason !== 'no_window' && decision.reason !== 'disabled') {
+      log(`skip follow user=${message.author.id} channel=${message.channelId} message=${message.id} reason=${decision.reason}`);
+    }
+    return false;
+  }
+  log(`follow scheduled user=${message.author.id} username=${message.author.username} channel=${message.channelId} message=${message.id} debounce_ms=${followSessions.debounceMs}`);
+  return true;
+}
+
 client.on('messageCreate', async (message) => {
   try {
     if (client.user && message.author.id === client.user.id) {
@@ -1142,6 +1235,17 @@ client.on('messageCreate', async (message) => {
       // on ourselves (return below): no webhook, no throwback, no self-reply.
       if (message.guildId && USERMEM_ENABLED && allowedGuilds.has(message.guildId) && !message.system) {
         userMem.recordMessage(message, { selfId: client.user.id }).catch((err) => log(`warn: usermem self append failed: ${err.message}`));
+      }
+      // Conversation follow: open/refresh a short window in this guild
+      // channel. Slash responses (/classement, /fiche, /restart) do not start one.
+      if (
+        followSessions.enabled
+        && message.guildId
+        && allowedGuilds.has(message.guildId)
+        && !message.system
+        && !isSlashResponse(message)
+      ) {
+        followSessions.noteBotReply(message.channelId);
       }
       return;
     }
@@ -1207,11 +1311,13 @@ client.on('messageCreate', async (message) => {
     });
     const trigger = decision.trigger;
     if (!trigger) {
-      if (decision.skipped) {
+      const followed = maybeScheduleFollow(message, { authorIsBot, isDm });
+      if (!followed && decision.skipped) {
         log(`skip out-of-scope trigger=${decision.skipped} user=${message.author.id} channel=${message.channelId} message=${message.id} reason=outside AGENTS without explicit @mention`);
       }
       return;
     }
+    if (!authorIsBot && !isDm) followSessions.noteRealTrigger(message.channelId);
 
     if (authorIsBot) {
       const g = botLoopGuard.check(message.channelId, message.author.id);

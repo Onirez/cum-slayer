@@ -38,6 +38,12 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | `USER_COOLDOWN_MS` | `10000` | Délai par auteur (humain ou bot) |
 | `GLOBAL_WINDOW_MS` / `GLOBAL_MAX` | 10 min / 20 | Quota global de déclencheurs |
 | `WEBHOOK_TIMEOUT_MS` | `15000` | Timeout de l’appel à la routine |
+| `FOLLOW` | `on` | `off` coupe le suivi de conversation |
+| `FOLLOW_WINDOW_MS` | `120000` | Durée de la fenêtre de suivi après une réponse du bot (2 min) |
+| `FOLLOW_MAX_PER_WINDOW` | `3` | Suivis max par fenêtre et par salon. Une réponse du bot relance la fenêtre sans remettre ce compteur à zéro ; seul un déclencheur humain « réel » le réinitialise |
+| `FOLLOW_DEBOUNCE_MS` | `4500` | Regroupe les messages rapides d’une même personne en un seul suivi |
+| `FOLLOW_HOURLY_MAX` | `30` | Plafond global de suivis par heure |
+| `FOLLOW_HOURLY_MS` | `3600000` | Fenêtre glissante du plafond horaire |
 
 ## Pont distant et HTTP
 

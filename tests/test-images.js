@@ -137,6 +137,10 @@ ok(shouldAttachImages({ isDm: true, authorIsBot: true }) === false, 'never inclu
 ok(shouldAttachImages({}) === false, 'omit images for ambient triggers (no mention, name, reply, or DM)');
 ok(shouldAttachImages({ mentioned: false, named: false, replyToBot: false, isDm: false }) === false, 'keyword-only / ambient: no images');
 
+ok(shouldAttachImages({ follow: true }) === true, 'include images on a human conversation-follow');
+ok(shouldAttachImages({ follow: true, authorIsBot: true }) === false, 'never include images from other bots, even on follow');
+
+
 // --- image-only messages still trigger when aimed at the bot ---
 const d = scope.decideTrigger;
 ok(d({ isDm: false, inAgents: false, explicitMention: false, mentioned: false, named: false, replyToBot: true, keyword: false }).trigger === 'reply_to_bot', 'image-only reply to the bot still triggers (empty content)');

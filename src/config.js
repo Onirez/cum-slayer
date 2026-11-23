@@ -93,6 +93,12 @@ const config = {
   BOT_LOOP_MAX: Number(process.env.BOT_LOOP_MAX || 5),
   BOT_LOOP_IDLE_MS: Number(process.env.BOT_LOOP_IDLE_MS || process.env.BOT_LOOP_WINDOW_MS || 20_000),
   BOT_AUTHOR_COOLDOWN_MS: Number(process.env.BOT_AUTHOR_COOLDOWN_MS || 5_000),
+  FOLLOW: flagOn('FOLLOW', 'on'),
+  FOLLOW_WINDOW_MS: Number(process.env.FOLLOW_WINDOW_MS || 120_000),
+  FOLLOW_MAX_PER_WINDOW: Number(process.env.FOLLOW_MAX_PER_WINDOW || 3),
+  FOLLOW_DEBOUNCE_MS: Number(process.env.FOLLOW_DEBOUNCE_MS || 4_500),
+  FOLLOW_HOURLY_MAX: Number(process.env.FOLLOW_HOURLY_MAX || 30),
+  FOLLOW_HOURLY_MS: Number(process.env.FOLLOW_HOURLY_MS || 3_600_000),
   AUTO_VOICE_DEBOUNCE_MS: Number(process.env.AUTO_VOICE_DEBOUNCE_MS || 5_000),
   AUTO_VOICE_RESYNC_MS: Number(process.env.AUTO_VOICE_RESYNC_MS || 60_000),
 

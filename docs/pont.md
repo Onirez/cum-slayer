@@ -21,8 +21,15 @@ Pour chaque message, `src/scope.js` `decideTrigger` produit l’un des identifia
 | `reply_to_bot` | Réponse à un message du bot (partout, exception du créateur) |
 | `dm` | Message privé d’un membre du serveur autorisé |
 | `daily_roast` | Tâche planifiée, pas un message (voir [roast-du-jour.md](roast-du-jour.md)) |
+| `follow` | Message humain, sans mention / alias / réponse, dans un salon où le bot vient de parler (fenêtre de 2 min). Jamais en DM, jamais pour un bot, jamais si l’auteur a opté out. |
 
 Les messages du bot lui-même ne déclenchent jamais.
+
+### Suivi de conversation (`follow`)
+
+Après chaque réponse de cûm slayer dans un salon (hors réponses aux commandes slash `/classement`, `/fiche`, `/restart`), le pont ouvre une fenêtre de 2 minutes (`FOLLOW_WINDOW_MS`, défaut 120000). Pendant cette fenêtre, un message d’humain sans mention, alias ni réponse au bot est quand même envoyé à la routine avec `trigger: "follow"`, et le contexte `recent` habituel. Les messages d’autres bots ne déclenchent jamais le suivi ; `BotLoopGuard` reste inchangé.
+
+Garde-fous : au plus 3 suivis par fenêtre et par salon (`FOLLOW_MAX_PER_WINDOW`) ; debounce de 4,5 s (`FOLLOW_DEBOUNCE_MS`) pour regrouper les messages rapides d’une même personne en un seul réveil (le plus récent sert de cible) ; plafond global de 30 suivis par heure (`FOLLOW_HOURLY_MAX`). Une réponse du bot à un follow relance la fenêtre, mais le compteur de 3 ne se remet à zéro que sur une vraie interpellation humaine (mention, alias, mot-clé, ou réponse au bot). Le suivi n’utilise pas le délai de 10 s par auteur ni le quota global 20/10 min. Pas d’indicateur « en train d’écrire », pas de throwback. Les photos du message humain sont jointes si présentes (jamais celles d’un bot). État en mémoire : un redémarrage ou un déploiement efface les fenêtres. `FOLLOW=off` coupe le suivi.
 
 ## Commandes `/classement` et `/fiche`
 
@@ -43,7 +50,7 @@ Le JSON contient notamment :
 - `guild_id`, `channel_id`, `message_id`, `is_dm`, `in_agents`, `trigger`
 - `author` (id, nom, `bot`)
 - `content`, `recent` (jusqu’à 10 messages), `referenced` (`referenced.images` si le message cité contient une photo)
-- `images` : jusqu’à 4 photos (`url`, `filename`, `content_type`, `width`, `height`, `size`) uniquement si le message mentionne le bot, l’appelle par un alias, répond à un de ses messages, ou est un DM. Jamais pour un autre bot ni un déclencheur ambiant. Fichiers > 10 Mo exclus. Un message peut n’être qu’une photo : il déclenche quand même s’il vise le bot.
+- `images` : jusqu’à 4 photos (`url`, `filename`, `content_type`, `width`, `height`, `size`) uniquement si le message mentionne le bot, l’appelle par un alias, répond à un de ses messages, est un DM, ou est un suivi de conversation humain (`trigger: "follow"`). Jamais pour un autre bot ni un déclencheur ambiant (mot-clé seul). Fichiers > 10 Mo exclus. Un message peut n’être qu’une photo : il déclenche quand même s’il vise le bot.
 - `mentions` (users, roles, channels)
 - `guild` (salons, rôles, vocal, membre… ; `channels[].agents` pour le périmètre)
 - `memory` (auteur, mentionnés)

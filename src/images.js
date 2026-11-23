@@ -102,12 +102,13 @@ function collectImages(message) {
 
 /**
  * Images are only forwarded when the message is clearly aimed at the bot
- * (mention, alias, reply to the bot, or a DM). Never for other bots, and
+ * (mention, alias, reply to the bot, or a DM), or when it is a human
+ * conversation-follow after the bot just spoke. Never for other bots, and
  * never for ambient triggers (keyword-only in AGENTS, etc.).
  */
-function shouldAttachImages({ authorIsBot, mentioned, named, replyToBot, isDm } = {}) {
+function shouldAttachImages({ authorIsBot, mentioned, named, replyToBot, isDm, follow } = {}) {
   if (authorIsBot) return false;
-  return Boolean(mentioned || named || replyToBot || isDm);
+  return Boolean(mentioned || named || replyToBot || isDm || follow);
 }
 
 function withImages(target, message, include) {

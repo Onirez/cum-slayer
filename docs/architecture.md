@@ -16,8 +16,8 @@ sequenceDiagram
   participant R as Routine IA
 
   D->>B: MESSAGE_CREATE
-  B->>B: decideTrigger (scope.js)
-  alt pas de déclencheur, hors périmètre, ou anti-boucle
+  B->>B: decideTrigger (scope.js) / suivi (follow.js)
+  alt pas de déclencheur, hors périmètre, anti-boucle, ou suivi inéligible
     B-->>B: log skip, silence
   else déclencheur accepté
     B->>B: mémoire, skills, historique, guild

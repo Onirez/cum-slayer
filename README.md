@@ -85,6 +85,7 @@ Le déploiement 24 h/24 sur Fly.io est décrit dans [docs/deploiement-fly.md](do
 │   ├── bridge.js             # Entrée : gateway, déclencheurs, présence, vocal
 │   ├── config.js             # Identifiants et chemins, surchargés par l’env
 │   ├── scope.js              # Périmètre AGENTS, déclencheurs, anti-boucle, DM
+│   ├── follow.js             # Suivi de conversation après une réponse du bot
 │   ├── perms.js              # Calcul des permissions Discord
 │   ├── mod.js / act.js       # Outils serveur + plans à confirmer
 │   ├── act_http.js           # API HTTP /health, /act, /run
@@ -97,6 +98,7 @@ Le déploiement 24 h/24 sur Fly.io est décrit dans [docs/deploiement-fly.md](do
 ├── deploy/fly/               # Fly.io (Dockerfile, fly.toml, deploy-fly.sh)
 ├── docs/                     # Explications détaillées
 ├── prompts/ROUTINE_PROMPT.fr.md
+├── drafts/                   # Textes à ajouter au prompt de la routine
 ├── data/                     # État runtime (exemples fournis, pas de données perso)
 ├── assets/                   # Avatar et bannières
 └── tests/
