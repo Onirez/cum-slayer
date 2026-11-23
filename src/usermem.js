@@ -348,8 +348,9 @@ const PERIOD_MS = {
 };
 
 /**
- * Top-N most active human members from usermem logs.
- * Skips opted-out users and bots (entries flagged `b`). Optional period
+ * Top-N most active members from usermem logs, including other bots.
+ * Skips opted-out users and this bot (`selfId`). Rows for authors flagged
+ * `b` get `bot: true` so the slash embed can mark them. Optional period
  * ('7j' | '30j' | 'tout') and channel id. Pure disk read, no network.
  */
 function leaderboard({ period = '7j', channelId = null, limit = 10, now = Date.now(), selfId = null } = {}) {
@@ -369,7 +370,7 @@ function leaderboard({ period = '7j', channelId = null, limit = 10, now = Date.n
     if (selfId && id === String(selfId)) continue;
     if (isOptedOut(id)) continue;
     const all = readLog(id);
-    if (all.some((e) => e && e.b)) continue;
+    const isBot = all.some((e) => e && e.b);
     const entries = all.filter((e) => {
       if (since != null && !(Number(e.t) >= since)) return false;
       if (ch && e.ch !== ch) return false;
@@ -385,12 +386,14 @@ function leaderboard({ period = '7j', channelId = null, limit = 10, now = Date.n
     const name = [...entries].reverse().find((e) => e.n)?.n
       || [...all].reverse().find((e) => e.n)?.n
       || null;
-    rows.push({
+    const row = {
       id,
       name,
       count: entries.length,
       top_channel: top ? top[0] : null,
-    });
+    };
+    if (isBot) row.bot = true;
+    rows.push(row);
   }
   rows.sort((a, b) => b.count - a.count || String(a.name || a.id).localeCompare(String(b.name || b.id)));
   const n = Math.max(1, Math.min(25, Number(limit) || 10));

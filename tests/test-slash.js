@@ -45,6 +45,7 @@ function add(id, { t, ch, cn, c, n, b } = {}) {
 const classCmd = slash.classementPayload();
 ok(classCmd.name === 'classement' && classCmd.type === 1 && classCmd.dm_permission === false, '/classement is a guild chat-input command');
 ok(!classCmd.default_member_permissions, '/classement is visible to everyone (no admin permission bit)');
+ok(/bots/i.test(classCmd.description), '/classement description says bots are included');
 const periodOpt = (classCmd.options || []).find((o) => o.name === 'periode');
 const salonOpt = (classCmd.options || []).find((o) => o.name === 'salon');
 ok(periodOpt && periodOpt.type === 3 && periodOpt.required === false, 'periode is an optional string');
@@ -69,17 +70,18 @@ add(SELF, { t: now - 1000, ch: '10', cn: 'blabla', c: 'moi', n: 'cûm slayer' })
 um.setOptout(OUT, true);
 
 const week = um.leaderboard({ period: '7j', now, selfId: SELF });
-ok(week.period === '7j' && week.rows.length === 2, '7j leaderboard has two humans (bot, opt-out, self, old message excluded)');
-ok(week.rows[0].id === A && week.rows[0].count === 3 && week.rows[0].name === 'Alice', 'Alice is first with 3 messages');
+ok(week.period === '7j' && week.rows.length === 3, '7j leaderboard has Alice, Bob and the other bot (opt-out, self, old message excluded)');
+ok(week.rows[0].id === A && week.rows[0].count === 3 && week.rows[0].name === 'Alice' && !week.rows[0].bot, 'Alice is first with 3 messages');
 ok(week.rows[0].top_channel === '#blabla', 'top channel is the one with the most messages');
-ok(week.rows[1].id === B && week.rows[1].count === 1, 'Bob is second');
-ok(!week.rows.some((r) => r.id === BOT || r.id === OUT || r.id === SELF || r.id === C), 'skips bot, opted-out, self, and out-of-window users');
+ok(week.rows[1].id === B && week.rows[1].count === 1 && !week.rows[1].bot, 'Bob is second (same count as the bot, name sorts first)');
+ok(week.rows[2].id === BOT && week.rows[2].count === 1 && week.rows[2].bot === true && week.rows[2].name === 'NotAHuman', 'other bot is included and flagged');
+ok(!week.rows.some((r) => r.id === OUT || r.id === SELF || r.id === C), 'skips opted-out, self, and out-of-window users');
 
 const month = um.leaderboard({ period: '30j', now, selfId: SELF });
-ok(month.rows.length === 3 && month.rows.some((r) => r.id === C && r.count === 1), '30j includes Carole\'s 20-day-old message');
+ok(month.rows.length === 4 && month.rows.some((r) => r.id === C && r.count === 1), '30j includes Carole\'s 20-day-old message');
 
 const all = um.leaderboard({ period: 'tout', now, selfId: SELF });
-ok(all.rows.length === 3, 'tout includes the same humans as 30j here');
+ok(all.rows.length === 4 && all.rows.some((r) => r.id === BOT && r.bot), 'tout includes the same people as 30j here, bot included');
 
 const chOnly = um.leaderboard({ period: '7j', channelId: '20', now, selfId: SELF });
 ok(chOnly.rows.length === 1 && chOnly.rows[0].id === A && chOnly.rows[0].count === 1, 'salon filter counts only that channel');
@@ -98,6 +100,7 @@ ok(top.rows.length === 10, 'leaderboard is capped at 10');
 const embed = slash.buildClassementEmbed({ period: '7j', rows: week.rows });
 ok(embed.title && /parlent trop|bavard/i.test(embed.title) && /7 jours/.test(embed.title), 'classement embed has an arrogant period title');
 ok(/Alice/.test(embed.description) && /\*\*1\.\*\*/.test(embed.description), 'embed lists ranks and names');
+ok(/NotAHuman 🤖/.test(embed.description) && !/Alice 🤖/.test(embed.description), 'embed marks bots with 🤖, not humans');
 ok(!embed.description.includes('<@'), 'embed does not ping (no <@id> mentions)');
 ok(embed.footer && /Aucune IA/.test(embed.footer.text), 'footer says no AI was used');
 const emptyEmbed = slash.buildClassementEmbed({ period: '7j', rows: [] });

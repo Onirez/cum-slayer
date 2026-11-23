@@ -41,7 +41,7 @@ function ixPath() {
 function classementPayload() {
   return {
     name: CLASSEMENT,
-    description: 'Top 10 des membres les plus actifs (local, sans IA).',
+    description: 'Top 10 des plus actifs, humains et bots (local, sans IA).',
     type: 1,
     dm_permission: false,
     options: [
@@ -132,9 +132,10 @@ function buildClassementEmbed({ period = '7j', channelName = null, rows = [] } =
   } else {
     const lines = rows.map((r, i) => {
       const name = r.name || r.id;
+      const mark = r.bot ? ' 🤖' : '';
       const ch = r.top_channel ? ` · ${r.top_channel}` : '';
       const n = r.count === 1 ? '1 message' : `${r.count} messages`;
-      return `**${i + 1}.** ${name} — ${n}${ch}`;
+      return `**${i + 1}.** ${name}${mark} — ${n}${ch}`;
     });
     description = (channelName ? `Salon${where}.\n` : '') + lines.join('\n');
   }
