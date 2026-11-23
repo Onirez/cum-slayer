@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+**/.act_secret
+webhook_url.txt
+
+# Runtime / logs / process files
+*.log
+*.pid
+*.out
+.stopping
+.fly-cutover
+supervisor.out
+data/heartbeat
+data/*.lock
+data/*.tmp
+data/memory/*.json
+data/interactions.json
+data/triggers.json
+data/triggers_consumed.json
+data/agents_contacts.json
+data/daily_roast.json
+data/pending_plans.json
+data/status_override.json
+data/.swapfile
+
+# Test artifacts
+tests/tmp*.json
+tests/stranger.txt
+
+# OS / editors
+.DS_Store
+**/.idea/
+**/*.tsbuildinfo

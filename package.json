@@ -1,0 +1,28 @@
+{
+  "name": "cum-slayer",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pont Discord (discord.js v14) pour le bot cûm slayer : déclencheurs, plans à confirmer, mémoire, roast du jour, vocal automatique.",
+  "main": "src/bridge.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/bridge.js",
+    "start:supervised": "bash scripts/start.sh",
+    "stop": "bash scripts/stop.sh",
+    "test": "node tests/test-offline.js && node tests/test-act-http.js",
+    "test:live": "node tests/test-rules.js && node tests/test-roast.js",
+    "check": "node --check src/bridge.js && node --check src/act.js && node --check src/act_http.js && node --check src/mod.js && node --check src/scope.js && node --check src/roast.js && node --check src/config.js",
+    "roast": "bash scripts/roast_now.sh",
+    "roast:dry": "bash scripts/roast_now.sh --dry-run"
+  },
+  "license": "MIT",
+  "author": "Baptiste Martin",
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.24.0",
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.0.8"
+  }
+}

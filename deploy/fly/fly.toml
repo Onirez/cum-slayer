@@ -1,0 +1,38 @@
+# Pont Discord (gateway always-on) + endpoint /act.
+# Déployer UNIQUEMENT via deploy/fly/deploy-fly.sh (passe --ha=false).
+# Ne pas lancer `fly deploy` à la main sans --ha=false : le défaut crée
+# une deuxième machine, ce qui ferait dépasser les 5 $/mois du plan Free.
+app = "cum-slayer-bridge"
+primary_region = "cdg"
+kill_signal = "SIGTERM"
+kill_timeout = 20
+
+[env]
+  NODE_ENV = "production"
+  ACT_HTTP = "on"
+  PORT = "8080"
+  TZ = "Europe/Paris"
+  NODE_OPTIONS = "--max-old-space-size=160"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "45s"
+    interval = "15s"
+    method = "GET"
+    timeout = "2s"
+    path = "/health"
+
+[mounts]
+  source = "bridge_data"
+  destination = "/app/data"
+  initial_size = "1gb"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

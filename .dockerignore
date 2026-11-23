@@ -1,0 +1,27 @@
+# Build context = racine du dépôt
+node_modules
+.git
+.gitignore
+*.log
+*.pid
+*.out
+.stopping
+.fly-cutover
+.env
+.env.*
+webhook_url.txt
+deploy/fly/.act_secret
+data/heartbeat
+data/*.lock
+data/*.tmp
+data/memory/*.json
+data/interactions.json
+data/triggers.json
+data/agents_contacts.json
+data/daily_roast.json
+data/pending_plans.json
+tests
+docs
+prompts
+assets
+drafts

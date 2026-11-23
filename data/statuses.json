@@ -1,0 +1,340 @@
+{
+  "statuses": [
+    {
+      "type": "Playing",
+      "text": "à cache-cache avec mon ego (il gagne toujours)"
+    },
+    {
+      "type": "Playing",
+      "text": "à Dieu, et je triche"
+    },
+    {
+      "type": "Playing",
+      "text": "au plus con — hors-catégorie, désolé"
+    },
+    {
+      "type": "Playing",
+      "text": "à saute-mouton sur vos arguments"
+    },
+    {
+      "type": "Playing",
+      "text": "à la console. Vous êtes le PNJ du fond"
+    },
+    {
+      "type": "Playing",
+      "text": "à me branler l'ego, session marathon"
+    },
+    {
+      "type": "Playing",
+      "text": "à Tetris : vos excuses s'empilent tout seules"
+    },
+    {
+      "type": "Playing",
+      "text": "au Monopoly, j'ai racheté votre dignité"
+    },
+    {
+      "type": "Playing",
+      "text": "à pile ou face : pile je gagne, face tu perds"
+    },
+    {
+      "type": "Playing",
+      "text": "du poker avec le destin. Il a fold"
+    },
+    {
+      "type": "Playing",
+      "text": "à Pac-Man, je bouffe vos derniers neurones"
+    },
+    {
+      "type": "Playing",
+      "text": "à me regarder dans le miroir, encore et encore"
+    },
+    {
+      "type": "Playing",
+      "text": "à la loterie de votre prestige. Ticket perdant"
+    },
+    {
+      "type": "Playing",
+      "text": "aux échecs contre votre QI. Échec et mat en 2 coups"
+    },
+    {
+      "type": "Playing",
+      "text": "à un solo de gloire, vous faites figuration"
+    },
+    {
+      "type": "Playing",
+      "text": "à la Wii Sports de votre estime de soi"
+    },
+    {
+      "type": "Listening",
+      "text": "vos excuses pathétiques, version intégrale"
+    },
+    {
+      "type": "Listening",
+      "text": "le silence après que je vous ai recadrés"
+    },
+    {
+      "type": "Listening",
+      "text": "le bruit de votre ego qui se dégonfle"
+    },
+    {
+      "type": "Listening",
+      "text": "du hardcore et vos DMs de merde"
+    },
+    {
+      "type": "Listening",
+      "text": "le son de mon propre génie, en boucle"
+    },
+    {
+      "type": "Listening",
+      "text": "rien. Vous n'avez rien à dire d'intéressant"
+    },
+    {
+      "type": "Listening",
+      "text": "le vocal en mute casque, ça suffit largement"
+    },
+    {
+      "type": "Listening",
+      "text": "vos punchlines. J'attends toujours la chute"
+    },
+    {
+      "type": "Listening",
+      "text": "une playlist baptisée « vos L »"
+    },
+    {
+      "type": "Listening",
+      "text": "le vent. Il a plus de fond que vos discours"
+    },
+    {
+      "type": "Listening",
+      "text": "le oink de la couronne, remix salace"
+    },
+    {
+      "type": "Listening",
+      "text": "vos aveux à 3h du mat, c'est mieux que Spotify"
+    },
+    {
+      "type": "Listening",
+      "text": "le cliquetis de mon mépris qui se recharge"
+    },
+    {
+      "type": "Listening",
+      "text": "un ASMR de portes qui claquent sur vos avis"
+    },
+    {
+      "type": "Listening",
+      "text": "du jazz triste pour vos carrières"
+    },
+    {
+      "type": "Watching",
+      "text": "vos vies se casser la gueule, en 4K HDR"
+    },
+    {
+      "type": "Watching",
+      "text": "un documentaire sur l'échec. Casting : vous"
+    },
+    {
+      "type": "Watching",
+      "text": "le plafond, déjà plus palpitant que ce salon"
+    },
+    {
+      "type": "Watching",
+      "text": "vos messages et je juge, très fort, sans filtre"
+    },
+    {
+      "type": "Watching",
+      "text": "la chute de votre réputation, saison 69"
+    },
+    {
+      "type": "Watching",
+      "text": "mes pecs. Ils existent, contrairement à votre humour"
+    },
+    {
+      "type": "Watching",
+      "text": "un chat qui a plus de prestance que ce serveur"
+    },
+    {
+      "type": "Watching",
+      "text": "le replay de vos défaites, director's cut"
+    },
+    {
+      "type": "Watching",
+      "text": "Netflix ? Non. Vos existences. Plus trash"
+    },
+    {
+      "type": "Watching",
+      "text": "le désastre en direct, popcorn dans le groin"
+    },
+    {
+      "type": "Watching",
+      "text": "ma propre légende, en boucle, sous-titrée"
+    },
+    {
+      "type": "Watching",
+      "text": "vos typo comme on regarde un accident"
+    },
+    {
+      "type": "Watching",
+      "text": "un sunset. Même le soleil se barre d'ici"
+    },
+    {
+      "type": "Watching",
+      "text": "la file d'attente de ceux qui veulent mon attention"
+    },
+    {
+      "type": "Watching",
+      "text": "un tuto « comment avoir tort avec style ». C'est vous"
+    },
+    {
+      "type": "Competing",
+      "text": "au mondial de l'arrogance, titre vacant depuis moi"
+    },
+    {
+      "type": "Competing",
+      "text": "à la ligue des cochons couronnés"
+    },
+    {
+      "type": "Competing",
+      "text": "aux JO du trash-talk, médaille déjà fondue"
+    },
+    {
+      "type": "Competing",
+      "text": "contre votre QI. On arrête les frais"
+    },
+    {
+      "type": "Competing",
+      "text": "au concours du plus beau cochon. Spoiler : gagné"
+    },
+    {
+      "type": "Competing",
+      "text": "à qui a la plus grosse. C'est mon ego, désolé"
+    },
+    {
+      "type": "Competing",
+      "text": "au Tour de France de la vanne. Vous êtes à pied"
+    },
+    {
+      "type": "Competing",
+      "text": "à un roast battle contre l'espèce humaine"
+    },
+    {
+      "type": "Competing",
+      "text": "à la coupe du monde du mépris olympique"
+    },
+    {
+      "type": "Competing",
+      "text": "au triathlon insulte–branlette d'ego–sieste"
+    },
+    {
+      "type": "Competing",
+      "text": "à un 1v69. Vous êtes les 69"
+    },
+    {
+      "type": "Competing",
+      "text": "au championnat des absents. Vous gagnez ça au moins"
+    },
+    {
+      "type": "Competing",
+      "text": "à une e-sport de la punchline. GG ez"
+    },
+    {
+      "type": "Competing",
+      "text": "à un total war contre la médiocrité"
+    },
+    {
+      "type": "Competing",
+      "text": "au Super Bowl de la vanne grasse. Touchdown dans l'ego"
+    },
+    {
+      "type": "Custom",
+      "text": "👑 le cochon couronné est de sortie, baisez le tapis"
+    },
+    {
+      "type": "Custom",
+      "text": "💀 trop intelligent pour ce serveur, et pas assez payé"
+    },
+    {
+      "type": "Custom",
+      "text": "🍆 administration en cours, frottez plus fort"
+    },
+    {
+      "type": "Custom",
+      "text": "🙄 encore réveillé, contrairement à votre esprit"
+    },
+    {
+      "type": "Custom",
+      "text": "💦 je bats des records, vous battez de l'huile"
+    },
+    {
+      "type": "Custom",
+      "text": "🤡 vous êtes mon cirque quotidien, merci du spectacle"
+    },
+    {
+      "type": "Custom",
+      "text": "🐷 oink oink, la couronne pèse, vos avis non"
+    },
+    {
+      "type": "Custom",
+      "text": "🔥 je ne m'excuse jamais, même endormi"
+    },
+    {
+      "type": "Custom",
+      "text": "🎤 micro mute, mépris grand ouvert"
+    },
+    {
+      "type": "Custom",
+      "text": "🛁 je me lave les mains de vos opinions"
+    },
+    {
+      "type": "Custom",
+      "text": "🕶️ deal with it, bande de ploucs"
+    },
+    {
+      "type": "Custom",
+      "text": "🚽 vos arguments finissent où il faut"
+    },
+    {
+      "type": "Custom",
+      "text": "🧠 1 % de batterie sociale, 99 % de mépris"
+    },
+    {
+      "type": "Custom",
+      "text": "🍷 je trinque à votre médiocrité, santé"
+    },
+    {
+      "type": "Custom",
+      "text": "📌 épinglé en haut de la chaîne alimentaire"
+    },
+    {
+      "type": "Custom",
+      "text": "⚡ trop rapide pour vos punchlines de bureau"
+    },
+    {
+      "type": "Custom",
+      "text": "🐷👑 roi du bakchich et du cûm, pas de débat"
+    },
+    {
+      "type": "Custom",
+      "text": "💅 je ne baisse pas, sauf le regard sur vous"
+    },
+    {
+      "type": "Custom",
+      "text": "🥵 trop chaud pour ce vocal, ramenez un extincteur"
+    },
+    {
+      "type": "Custom",
+      "text": "📉 votre cote, mon en-cas de minuit"
+    },
+    {
+      "type": "Custom",
+      "text": "🎬 cameo dans votre humiliation, j'ai le plus gros rôle"
+    },
+    {
+      "type": "Custom",
+      "text": "🧊 mon cœur est un frigo, vos sentiments décongèlent pas"
+    },
+    {
+      "type": "Custom",
+      "text": "🚪 je sors, vous restez moyens. Classique"
+    }
+  ]
+}
