@@ -49,8 +49,10 @@ Le JSON contient notamment :
 
 - `guild_id`, `channel_id`, `message_id`, `is_dm`, `in_agents`, `trigger`
 - `author` (id, nom, `bot`)
-- `content`, `recent` (jusqu’à 10 messages), `referenced` (`referenced.images` si le message cité contient une photo)
+- `content`, `recent` (jusqu’à 10 messages), `referenced` (`referenced.images` / `referenced.videos` si le message cité contient une photo ou une vidéo). Un message sans texte mais avec une pièce jointe n’est plus envoyé vide : `content` porte une annotation du type `[vidéo: clip.mov]`, et `attachments_summary` liste les fichiers (nom, type, taille), sans URL.
 - `images` : jusqu’à 4 photos (`url`, `filename`, `content_type`, `width`, `height`, `size`) uniquement si le message mentionne le bot, l’appelle par un alias, répond à un de ses messages, est un DM, ou est un suivi de conversation humain (`trigger: "follow"`). Jamais pour un autre bot ni un déclencheur ambiant (mot-clé seul). Fichiers > 10 Mo exclus. Un message peut n’être qu’une photo : il déclenche quand même s’il vise le bot.
+- `videos` : jusqu’à 2 vidéos (`url`, `filename`, `content_type` mp4 / quicktime / webm, `width`, `height`, `size`, `duration` si dispo, `proxy_url`, `thumbnail` si fourni), mêmes conditions que `images`. Pièces jointes vidéo et embeds vidéo / gifv (Tenor, Giphy, Discord). Un gif classique (`image/gif`) reste dans `images`. Fichiers > 25 Mo exclus de `videos` mais décrits dans `attachments_summary`. Un message peut n’être qu’une vidéo.
+
 - `mentions` (users, roles, channels)
 - `guild` (salons, rôles, vocal, membre… ; `channels[].agents` pour le périmètre)
 - `memory` (auteur, mentionnés)
@@ -67,6 +69,7 @@ Aucun secret, aucun jeton, aucune URL de webhook n’y figure. Le pont tronque l
 | `scripts/send.sh`, `reply.sh`, `dm.sh`, `embed.sh`, `react.sh` | Secours, un outil à la fois |
 | `scripts/context.sh` | Relire un historique (rarement nécessaire : déjà dans le payload) |
 | `scripts/img.sh` | Télécharger une photo du payload (`img.sh <url>`) depuis le CDN Discord vers `data/img-cache/`, affiche le chemin local (max 10 Mo, 15 s, hôtes `cdn.discordapp.com` / `media.discordapp.net` uniquement ; cache purgé après 24 h) |
+| `scripts/vid.sh` | Télécharger une vidéo du payload (`vid.sh <url>`) depuis le CDN Discord, Tenor ou Giphy vers `data/vid-cache/`, extraire 3–4 images JPEG réparties sur la durée avec ffmpeg, afficher les chemins et `duration_s` (max 25 Mo, 20 s ; cache purgé après 24 h). Pas de transcription audio. S’exécute sur la machine de la routine (ffmpeg n’est pas installé sur Fly). |
 | `scripts/memory.sh`, `skills.sh` | Lecture / écriture fichier |
 | `scripts/user.sh` | Historique et notes par membre : `get`, `history`, `note`, `unnote`, `forget`, `optout` ([détails](memoire-par-user.md)) |
 | `scripts/mod.sh` | Lectures serveur uniquement (`list_roles`, `member_info`, …) |

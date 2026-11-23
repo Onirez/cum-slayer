@@ -40,6 +40,7 @@ tests/stranger.txt
 
 # Image download cache used by scripts/img.sh
 data/img-cache/
+data/vid-cache/
 
 # Slash /fiche interaction tokens (never commit)
 data/slash-ix.json

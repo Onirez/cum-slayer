@@ -358,7 +358,8 @@ function resolveContent(message) {
     const name = channel.name || id;
     content = content.replace(new RegExp(`<#${id}>`, 'g'), `#${name}`);
   }
-  return content;
+  // A video/image-only message has empty text; annotate so it is not "blank".
+  return images.annotateEmptyContent(content, message);
 }
 
 function authorName(message) {
@@ -503,7 +504,7 @@ async function getReferenced(message) {
       author: authorName(ref),
       content: truncate(resolveContent(ref), CONTENT_TRUNCATE),
     };
-    return images.withImages(out, ref, true);
+    return images.withMedia(out, ref, true);
   } catch {
     const user = message.mentions.repliedUser;
     return {
@@ -1160,7 +1161,10 @@ async function fireFollow(message) {
     );
     const referenced = await getReferenced(message);
     const includeImages = images.shouldAttachImages({ authorIsBot, follow: true });
-    if (referenced && !includeImages) delete referenced.images;
+    if (referenced && !includeImages) {
+      delete referenced.images;
+      delete referenced.videos;
+    }
     const payload = {
       guild_id: message.guildId || null,
       channel_id: message.channelId,
@@ -1183,10 +1187,14 @@ async function fireFollow(message) {
       skills: loadActiveSkills(),
       trigger,
     };
-    if (includeImages) images.withImages(payload, message, true);
+    if (includeImages) images.withMedia(payload, message, true);
+    else {
+      const summary = images.attachmentsSummary(message);
+      if (summary.length) payload.attachments_summary = summary;
+    }
     shrinkPayload(payload);
     log(
-      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} videos=${(payload.videos || []).length}+${(payload.referenced && payload.referenced.videos || []).length} attachments_summary=${(payload.attachments_summary || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
     );
     await postWebhook(payload);
   } catch (err) {
@@ -1358,7 +1366,10 @@ client.on('messageCreate', async (message) => {
     const includeImages = images.shouldAttachImages({
       authorIsBot, mentioned, named, replyToBot, isDm,
     });
-    if (referenced && !includeImages) delete referenced.images;
+    if (referenced && !includeImages) {
+      delete referenced.images;
+      delete referenced.videos;
+    }
     const payload = {
       guild_id: message.guildId || null,
       channel_id: message.channelId,
@@ -1381,11 +1392,15 @@ client.on('messageCreate', async (message) => {
       skills: loadActiveSkills(),
       trigger,
     };
-    if (includeImages) images.withImages(payload, message, true);
+    if (includeImages) images.withMedia(payload, message, true);
+    else {
+      const summary = images.attachmentsSummary(message);
+      if (summary.length) payload.attachments_summary = summary;
+    }
     shrinkPayload(payload);
 
     log(
-      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} videos=${(payload.videos || []).length}+${(payload.referenced && payload.referenced.videos || []).length} attachments_summary=${(payload.attachments_summary || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
     );
 
     await postWebhook(payload);
