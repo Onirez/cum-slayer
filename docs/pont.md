@@ -22,7 +22,12 @@ Pour chaque message, `src/scope.js` `decideTrigger` produit l’un des identifia
 | `dm` | Message privé d’un membre du serveur autorisé |
 | `daily_roast` | Tâche planifiée, pas un message (voir [roast-du-jour.md](roast-du-jour.md)) |
 
-Les messages du bot lui-même ne déclenchent jamais. Les autres bots suivent les mêmes règles, avec `BotLoopGuard` (5 réponses / 10 min / salon, reset si un humain écrit, 5 s entre deux messages du même bot).
+Les messages du bot lui-même ne déclenchent jamais.
+
+## Commande `/restart`
+
+Commande slash enregistrée sur le serveur (pas en global), visible par défaut seulement des administrateurs. Seul le créateur (`CREATOR_ID`) peut l’utiliser : le pont vérifie `interaction.user.id`, jamais un nom. Toute autre personne reçoit un refus éphémère. Le créateur reçoit « Redémarrage… » (éphémère), le client est détruit, le processus sort en code 1, et Fly relance la machine (`[[restart]] policy = "on-failure"`). Délai de 30 s entre deux redémarrages dans le même processus.
+ Les autres bots suivent les mêmes règles, avec `BotLoopGuard` (5 réponses / 10 min / salon, reset si un humain écrit, 5 s entre deux messages du même bot).
 
 ## Payload envoyé à la routine
 

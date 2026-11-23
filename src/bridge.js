@@ -19,6 +19,7 @@ const { AGENTS_CATEGORY_ID } = scope;
 const roast = require('./roast');
 const userMem = require('./usermem');
 const images = require('./images');
+const restart = require('./restart');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
 
@@ -82,6 +83,7 @@ const allowedGuilds = new Set(config.ALLOWED_GUILDS);
 const botAliases = config.BOT_ALIASES.slice();
 
 const userCooldowns = new Map(); // userId -> last trigger ts
+let lastRestartAt = 0;
 const botLoopGuard = new scope.BotLoopGuard({
   maxPerWindow: config.BOT_LOOP_MAX,
   windowMs: config.BOT_LOOP_WINDOW_MS,
@@ -1062,6 +1064,20 @@ function onReady(c) {
   }
   armPresenceMidnight();
   startDailyRoast();
+  registerSlashCommands(c);
+}
+
+async function registerSlashCommands(c) {
+  try {
+    const guildIds = [...allowedGuilds];
+    await restart.registerRestartCommand({
+      applicationCommands: c.application.commands,
+      guildIds,
+      log,
+    });
+  } catch (err) {
+    log(`slash /restart registration failed: ${err.message}`);
+  }
 }
 
 client.once('clientReady', onReady);
@@ -1333,8 +1349,39 @@ function mod() {
   return modLib;
 }
 
+async function handleRestartCommand(interaction) {
+  const userId = interaction.user?.id;
+  const decision = restart.decideRestart({
+    userId,
+    creatorId: CREATOR_USER_ID,
+    now: Date.now(),
+    lastAt: lastRestartAt,
+  });
+  // Never trust a username: only interaction.user.id is checked.
+  if (!decision.ok) {
+    log(`slash /restart refused user=${userId} reason=${decision.reason}`);
+    await interaction.reply({ content: decision.reply, flags: 64 }).catch(() => {});
+    return;
+  }
+  lastRestartAt = Date.now();
+  await interaction.reply({ content: decision.reply, flags: 64 }).catch((err) => {
+    log(`slash /restart reply failed: ${err.message}`);
+  });
+  setTimeout(() => process.exit(1), 3000).unref();
+  await restart.performRestart({
+    userId,
+    log,
+    destroy: () => client.destroy(),
+    exit: (code) => process.exit(code),
+  });
+}
+
 client.on('interactionCreate', async (interaction) => {
   try {
+    if (interaction.isChatInputCommand() && interaction.commandName === restart.COMMAND_NAME) {
+      await handleRestartCommand(interaction);
+      return;
+    }
     if (!interaction.isButton()) return;
     const m = PLAN_BUTTON_RE.exec(interaction.customId || '');
     if (!m) return;

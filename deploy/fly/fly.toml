@@ -7,6 +7,13 @@ primary_region = "cdg"
 kill_signal = "SIGTERM"
 kill_timeout = 20
 
+# Exit 1 (watchdog, /restart, unhandled errors) must bring the machine back.
+# on-failure + retries = 10 matches the live machine; do not switch to "no".
+[[restart]]
+  policy = "on-failure"
+  retries = 10
+
+
 [env]
   NODE_ENV = "production"
   ACT_HTTP = "on"
