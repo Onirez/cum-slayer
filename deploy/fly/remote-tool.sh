@@ -3,12 +3,13 @@
 # Usage :
 #   remote-tool.sh act [--dry-run] < json
 #   remote-tool.sh memory get <user_id>
+#   remote-tool.sh user <get|history|note|unnote|forget|optout|optin|list> ...
 # Secrets : ACT_SHARED_SECRET et ACT_REMOTE_URL dans l'environnement uniquement.
 # Jamais passés en argv de curl, jamais journalisés.
 set -euo pipefail
 TOOL="${1:-}"
 if [[ -z "$TOOL" ]]; then
-  echo "Usage: $0 <act|memory|skills|context|dm|react|send|embed|mod|reply|roast_now> [args]" >&2
+  echo "Usage: $0 <act|memory|user|skills|context|dm|react|send|embed|mod|reply|roast_now> [args]" >&2
   exit 2
 fi
 shift

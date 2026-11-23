@@ -18,6 +18,7 @@ const { spawn } = require('child_process');
 const ALLOWED_TOOLS = Object.freeze({
   act: 'act.sh',
   memory: 'memory.sh',
+  user: 'user.sh',
   skills: 'skills.sh',
   context: 'context.sh',
   dm: 'dm.sh',

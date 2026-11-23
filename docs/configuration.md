@@ -50,3 +50,14 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | `DATA_DIR` | Surcharge du répertoire d’état (défaut : `data/` à la racine) |
 
 Les alias historiques `GROK_WEBHOOK_URL` / `GROK_WEBHOOK_KEY` sont encore lus en repli par `src/config.js` s’ils existent déjà dans un environnement, mais les nouveaux déploiements doivent utiliser `ROUTINE_*`.
+
+## Mémoire par utilisateur
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `USERMEM` | `on` | `off` coupe l'enregistrement et le bloc `users` du payload |
+| `USERMEM_KEEP` | `200` | Messages gardés par personne |
+| `USERMEM_MAX_FILE_BYTES` | `262144` | Taille max d'un log par personne |
+| `USERMEM_AUTHOR_LIMIT` | `15` | Messages de l'auteur injectés dans le payload |
+| `USERMEM_OTHER_LIMIT` | `6` | Messages par personne mentionnée / citée |
+| `USERMEM_DIR` | `data/users` | Dossier des logs et notes |

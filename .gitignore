@@ -19,6 +19,7 @@ data/heartbeat
 data/*.lock
 data/*.tmp
 data/memory/*.json
+data/users/
 data/interactions.json
 data/triggers.json
 data/triggers_consumed.json

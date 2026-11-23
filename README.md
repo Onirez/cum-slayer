@@ -50,6 +50,7 @@ Un seul processus gateway à la fois : Discord déconnecte le second s’il y en
 | **Plans Confirmer / Annuler** | Toute action qui crée, modifie ou supprime quelque chose est d’abord postée comme un plan. Seul le demandeur peut cliquer, pendant 10 minutes. |
 | **Permissions** | Calcul déterministe (propriétaire, Administrateur, rôles, overwrites, timeout). Les actions d’admin restent réservées au créateur. |
 | **Mémoire & skills** | Notes durables par utilisateur, et règles déclenchées par un motif. Voir [docs/memoire-skills.md](docs/memoire-skills.md). |
+| **Mémoire par utilisateur** | Historique des derniers messages de chaque membre + notes courtes, injectés en contexte de fond (utilisé rarement, pour viser juste). Voir [docs/memoire-par-user.md](docs/memoire-par-user.md). |
 | **Réactions** | Une réaction sur le message auquel il répond, pour exprimer une émotion. |
 | **Roast du jour** | Tous les soirs entre 18 h et 22 h (heure de Paris), une pique originale à quelqu’un avec qui il a déjà parlé dans AGENTS. |
 | **Vocal automatique** | Rejoint le salon vocal le plus rempli (micro ouvert, casque coupé), part quand il n’y a plus personne. |
@@ -108,6 +109,7 @@ Le déploiement 24 h/24 sur Fly.io est décrit dans [docs/deploiement-fly.md](do
 | [docs/deploiement-fly.md](docs/deploiement-fly.md) | Hébergement 24 h/24 sur Fly.io |
 | [docs/configuration.md](docs/configuration.md) | Variables d’environnement |
 | [docs/memoire-skills.md](docs/memoire-skills.md) | Mémoire utilisateurs et skills |
+| [docs/memoire-par-user.md](docs/memoire-par-user.md) | Historique + notes par membre, outil `user`, backfill, garde-fous |
 | [docs/roast-du-jour.md](docs/roast-du-jour.md) | Sélection, horaire, style |
 | [docs/vocal.md](docs/vocal.md) | Auto-voice et présence |
 | [docs/faq.md](docs/faq.md) | Dépannage |

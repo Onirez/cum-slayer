@@ -34,6 +34,7 @@ Le JSON contient notamment :
 - `mentions` (users, roles, channels)
 - `guild` (salons, rôles, vocal, membre… ; `channels[].agents` pour le périmètre)
 - `memory` (auteur, mentionnés)
+- `users` : historique récent + notes de l'auteur et des personnes mentionnées / à qui il répond, marqué « contexte de fond, à utiliser rarement » ([détails](memoire-par-user.md))
 - `skills` (trigger + règle des skills actives)
 
 Aucun secret, aucun jeton, aucune URL de webhook n’y figure. Le pont tronque les textes trop longs pour rester sous une taille raisonnable.
@@ -46,6 +47,7 @@ Aucun secret, aucun jeton, aucune URL de webhook n’y figure. Le pont tronque l
 | `scripts/send.sh`, `reply.sh`, `dm.sh`, `embed.sh`, `react.sh` | Secours, un outil à la fois |
 | `scripts/context.sh` | Relire un historique (rarement nécessaire : déjà dans le payload) |
 | `scripts/memory.sh`, `skills.sh` | Lecture / écriture fichier |
+| `scripts/user.sh` | Historique et notes par membre : `get`, `history`, `note`, `unnote`, `forget`, `optout` ([détails](memoire-par-user.md)) |
 | `scripts/mod.sh` | Lectures serveur uniquement (`list_roles`, `member_info`, …) |
 | `scripts/roast_now.sh` | Déclencher un roast à la main |
 

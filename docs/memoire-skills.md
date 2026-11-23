@@ -13,6 +13,10 @@ Deux magasins fichiers, dans `data/`, complémentent le payload envoyé à la ro
 
 La mémoire arrive déjà dans le payload (`memory.author`, `memory.mentioned`, et `memory.target` pour le roast). Inutile d’appeler `memory.sh get` sauf besoin exceptionnel.
 
+## Mémoire par utilisateur (historique + notes)
+
+En plus de `memoryText`, chaque membre a un historique de ses derniers messages et des notes courtes dans `data/users/`. Voir [memoire-par-user.md](memoire-par-user.md).
+
 ## Skills
 
 - Fichier : `data/skills.json` (`{ "skills": [ … ] }`).

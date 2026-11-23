@@ -15,7 +15,7 @@ COPY scripts ./scripts
 COPY AGENTS.md ./
 COPY deploy/fly/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh /app/scripts/*.sh \
-    && mkdir -p /app/data /app/data/memory
+    && mkdir -p /app/data /app/data/memory /app/data/users
 
 ENV NODE_ENV=production
 ENV ACT_HTTP=on

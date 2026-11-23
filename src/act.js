@@ -137,6 +137,7 @@ async function main() {
   const reply = body.reply == null || body.reply === '' ? null : String(body.reply);
   const react = body.react == null || body.react === '' ? null : String(body.react);
   const memoryAppend = Array.isArray(body.memory_append) ? body.memory_append : [];
+  const userNotes = Array.isArray(body.user_notes) ? body.user_notes.slice(0, 3) : [];
   const skillCreate = body.skill_create && typeof body.skill_create === 'object' ? body.skill_create : null;
   const authorId = body.author_id ? String(body.author_id) : '';
   const actions = Array.isArray(body.actions) ? body.actions : [];
@@ -150,7 +151,7 @@ async function main() {
     process.exit(2);
   }
 
-  const results = { reply: null, react: null, actions: [], plan: null, memory_append: [], skill_create: null };
+  const results = { reply: null, react: null, actions: [], plan: null, memory_append: [], user_notes: [], skill_create: null };
 
   // Discord Agent Rules: no unsolicited messages. The target must be a
   // recorded bridge trigger, or the channel must be in AGENTS / an interacted DM.
@@ -212,6 +213,19 @@ async function main() {
     const ran = runCli(path.join(DIR, 'memory.js'), ['append', subject, author, text], dryRun);
     if (!ran.ok) process.exit(ran.status || 1);
     results.memory_append.push({ subject, author });
+  }
+
+  // Per-user notes (usermem). A refused/invalid note never aborts the act.
+  if (userNotes.length) {
+    const um = require('./usermem');
+    for (const item of userNotes) {
+      try {
+        const r = um.addNote(String(item.subject || '').trim(), String(item.author || '').trim(), String(item.text || ''), { dryRun });
+        results.user_notes.push({ subject: r.userId, saved: Boolean(r.saved), dryRun: r.dryRun || undefined, reason: r.reason || undefined });
+      } catch (e) {
+        results.user_notes.push({ subject: String(item.subject || ''), saved: false, reason: e.message });
+      }
+    }
   }
 
   if (skillCreate) {

@@ -17,6 +17,7 @@ const path = require('path');
 const scope = require('./scope');
 const { AGENTS_CATEGORY_ID } = scope;
 const roast = require('./roast');
+const userMem = require('./usermem');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
 
@@ -42,6 +43,12 @@ const TYPING_MAX_MS = 90_000;
 const RECENT_LIMIT = 10;
 const CONTENT_TRUNCATE = 1_500;
 const PAYLOAD_MAX_CHARS = 80_000;
+const USERMEM_ENABLED = !['0', 'false', 'no', 'off'].includes(
+  String(process.env.USERMEM ?? 'on').trim().toLowerCase(),
+);
+const USERMEM_AUTHOR_LIMIT = Number(process.env.USERMEM_AUTHOR_LIMIT || 15);
+const USERMEM_OTHER_LIMIT = Number(process.env.USERMEM_OTHER_LIMIT || 6);
+const USERMEM_HINT = 'Contexte de fond. À utiliser rarement : seulement si ça rend la réponse plus juste (callback précis, comprendre de quoi la personne parle). Ne jamais réciter ni lister ce qui est su.';
 
 const USER_COOLDOWN_MS = config.USER_COOLDOWN_MS;
 const GLOBAL_WINDOW_MS = config.GLOBAL_WINDOW_MS;
@@ -165,9 +172,35 @@ function loadPrefetchedMemory(message, botId) {
   };
 }
 
+/** Per-user context (background) for the author + mentioned/replied users. */
+function loadUserContext(message, botId, referenced) {
+  if (!USERMEM_ENABLED || !message.guildId) return null;
+  try {
+    const author = userMem.contextFor(message.author.id, { limit: USERMEM_AUTHOR_LIMIT, excludeId: message.id, max: 220, role: 'author' });
+    const others = [];
+    const seen = new Set([message.author.id, botId].filter(Boolean));
+    const add = (id, role) => {
+      if (!id || seen.has(id) || others.length >= 3 || !/^\d{5,30}$/.test(id)) return;
+      seen.add(id);
+      const ctx = userMem.contextFor(id, { limit: USERMEM_OTHER_LIMIT, max: 160, role });
+      if (ctx.notes.length || ctx.recent.length) others.push(ctx);
+    };
+    add(referenced?.author_id, 'replied_to');
+    for (const id of collectMentionedUserIds(message, botId)) add(id, 'mentioned');
+    return { usage: USERMEM_HINT, author, others };
+  } catch (err) {
+    log(`warn: user context failed: ${err.message}`);
+    return null;
+  }
+}
+
 function shrinkPayload(payload) {
   let json = JSON.stringify(payload);
   if (json.length <= PAYLOAD_MAX_CHARS) return payload;
+  if (payload.users) {
+    payload.users.others = (payload.users.others || []).slice(0, 1);
+    if (payload.users.author?.recent) payload.users.author.recent = payload.users.author.recent.slice(-8);
+  }
   if (Array.isArray(payload.recent)) {
     for (const item of payload.recent) {
       if (item && item.content) item.content = truncate(item.content, 400);
@@ -1106,6 +1139,11 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // Per-user memory: log every guild message (never DMs). Fire-and-forget.
+    if (!isDm && USERMEM_ENABLED) {
+      userMem.recordMessage(message, { selfId: client.user?.id }).catch((err) => log(`warn: usermem append failed: ${err.message}`));
+    }
+
     // Discord Agent Rules (AGENTS.md), deterministic:
     //  - inside the AGENTS category: every trigger;
     //  - elsewhere in the guild: an explicit @mention token in the content, or a
@@ -1165,6 +1203,7 @@ client.on('messageCreate', async (message) => {
 
     startTypingLoop(message.channel);
 
+    const referenced = await getReferenced(message);
     const payload = shrinkPayload({
       guild_id: message.guildId || null,
       channel_id: message.channelId,
@@ -1179,16 +1218,17 @@ client.on('messageCreate', async (message) => {
       },
       content: truncate(resolveContent(message), 2000),
       recent: await recentMessages(message, RECENT_LIMIT),
-      referenced: await getReferenced(message),
+      referenced,
       mentions: compactMentions(message, client.user?.id),
       guild: compactGuildInfo(message.guildId || [...allowedGuilds][0]),
       memory: loadPrefetchedMemory(message, client.user?.id),
+      users: loadUserContext(message, client.user?.id, referenced),
       skills: loadActiveSkills(),
       trigger,
     });
 
     log(
-      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
     );
 
     await postWebhook(payload);

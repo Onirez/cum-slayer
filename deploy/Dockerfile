@@ -16,7 +16,7 @@ COPY src ./src
 COPY scripts ./scripts
 COPY AGENTS.md ./
 RUN chmod +x scripts/*.sh \
-    && mkdir -p /app/data /app/data/memory \
+    && mkdir -p /app/data /app/data/memory /app/data/users \
     && chown -R node:node /app
 
 USER node
