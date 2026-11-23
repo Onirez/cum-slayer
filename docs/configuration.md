@@ -56,8 +56,12 @@ Les alias historiques `GROK_WEBHOOK_URL` / `GROK_WEBHOOK_KEY` sont encore lus en
 | Variable | Défaut | Rôle |
 | --- | --- | --- |
 | `USERMEM` | `on` | `off` coupe l'enregistrement et le bloc `users` du payload |
-| `USERMEM_KEEP` | `200` | Messages gardés par personne |
-| `USERMEM_MAX_FILE_BYTES` | `262144` | Taille max d'un log par personne |
+| `USERMEM_KEEP` | `300` | Messages gardés par personne |
+| `USERMEM_MAX_FILE_BYTES` | `393216` | Taille max d'un log par personne |
 | `USERMEM_AUTHOR_LIMIT` | `15` | Messages de l'auteur injectés dans le payload |
 | `USERMEM_OTHER_LIMIT` | `6` | Messages par personne mentionnée / citée |
 | `USERMEM_DIR` | `data/users` | Dossier des logs et notes |
+| `USERMEM_THROWBACK` | `on` | « Vieux message » occasionnel dans `users.author.throwback` |
+| `USERMEM_THROWBACK_RATE` | `17` | Environ 1 déclenchement éligible sur N |
+| `USERMEM_THROWBACK_COOLDOWN_MS` | `72000000` | Au plus une fois par personne toutes les 20 h |
+| `USERMEM_THROWBACK_MIN_AGE_MS` | `259200000` | Message de plus de 3 jours |

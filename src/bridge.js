@@ -48,6 +48,10 @@ const USERMEM_ENABLED = !['0', 'false', 'no', 'off'].includes(
 );
 const USERMEM_AUTHOR_LIMIT = Number(process.env.USERMEM_AUTHOR_LIMIT || 15);
 const USERMEM_OTHER_LIMIT = Number(process.env.USERMEM_OTHER_LIMIT || 6);
+const USERMEM_THROWBACK = !['0', 'false', 'no', 'off'].includes(
+  String(process.env.USERMEM_THROWBACK ?? 'on').trim().toLowerCase(),
+);
+const THROWBACK_HINT = 'Vieux message de cette personne, remonté au hasard (rare). Tu PEUX t\'en servir pour un callback ou une pique si ça colle naturellement à la conversation ; sinon ignore-le complètement.';
 const USERMEM_HINT = 'Contexte de fond. À utiliser rarement : seulement si ça rend la réponse plus juste (callback précis, comprendre de quoi la personne parle). Ne jamais réciter ni lister ce qui est su.';
 
 const USER_COOLDOWN_MS = config.USER_COOLDOWN_MS;
@@ -173,10 +177,17 @@ function loadPrefetchedMemory(message, botId) {
 }
 
 /** Per-user context (background) for the author + mentioned/replied users. */
-function loadUserContext(message, botId, referenced) {
+function loadUserContext(message, botId, referenced, trigger) {
   if (!USERMEM_ENABLED || !message.guildId) return null;
   try {
     const author = userMem.contextFor(message.author.id, { limit: USERMEM_AUTHOR_LIMIT, excludeId: message.id, max: 220, role: 'author' });
+    if (USERMEM_THROWBACK && trigger && trigger !== 'daily_roast') {
+      const tb = userMem.maybeThrowback(message.author.id);
+      if (tb) {
+        author.throwback = { ...tb, hint: THROWBACK_HINT };
+        log(`throwback user=${message.author.id} from=${tb.t}`);
+      }
+    }
     const others = [];
     const seen = new Set([message.author.id, botId].filter(Boolean));
     const add = (id, role) => {
@@ -1222,7 +1233,7 @@ client.on('messageCreate', async (message) => {
       mentions: compactMentions(message, client.user?.id),
       guild: compactGuildInfo(message.guildId || [...allowedGuilds][0]),
       memory: loadPrefetchedMemory(message, client.user?.id),
-      users: loadUserContext(message, client.user?.id, referenced),
+      users: loadUserContext(message, client.user?.id, referenced, trigger),
       skills: loadActiveSkills(),
       trigger,
     });

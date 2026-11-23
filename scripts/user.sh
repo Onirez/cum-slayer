@@ -8,6 +8,7 @@
 #   user.sh forget <user_id> [all|notes|history]
 #   user.sh optout|optin <user_id>
 #   user.sh list [n]
+#   user.sh throwback <user_id> [--force] [--dry-run]
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

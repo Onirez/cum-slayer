@@ -7,6 +7,7 @@
  *                               (last USERMEM_KEEP lines, content <= 500 chars)
  *   data/users/<id>.notes.json  short factual notes the routine writes
  *   data/users/_optout.json     ids that asked not to be logged
+ *   data/users/_throwback.json  last throwback time per user (rate limit)
  *
  * Only guild messages are logged (never DMs). Low RAM: appends are async,
  * only a per-user line counter lives in memory, compaction is per file.
@@ -19,9 +20,9 @@ const path = require('path');
 let DATA_DIR;
 try { DATA_DIR = require('./config').DATA_DIR; } catch { DATA_DIR = path.join(__dirname, 'data'); }
 
-const KEEP = Math.max(20, Number(process.env.USERMEM_KEEP || 200));
+const KEEP = Math.max(20, Number(process.env.USERMEM_KEEP || 300));
 const COMPACT_AT = Math.round(KEEP * 1.25);
-const MAX_FILE_BYTES = Number(process.env.USERMEM_MAX_FILE_BYTES || 256 * 1024);
+const MAX_FILE_BYTES = Number(process.env.USERMEM_MAX_FILE_BYTES || 384 * 1024);
 const CONTENT_MAX = 500;
 const NOTE_MAX = 200;
 const NOTES_MAX = 30;
@@ -354,6 +355,64 @@ function listUsers(limit = 30) {
   return out.sort((a, b) => b._t - a._t).slice(0, limit).map(({ _t, ...rest }) => rest);
 }
 
+// ---- throwback ("vieux message"): rare callback to an older message ----
+const THROWBACK_RATE = Math.max(1, Number(process.env.USERMEM_THROWBACK_RATE || 17)); // ~1 in N eligible triggers
+const THROWBACK_COOLDOWN_MS = Number(process.env.USERMEM_THROWBACK_COOLDOWN_MS || 20 * 3600 * 1000);
+const THROWBACK_MIN_AGE_MS = Number(process.env.USERMEM_THROWBACK_MIN_AGE_MS || 3 * 24 * 3600 * 1000);
+const THROWBACK_SKIP_RECENT = 15;
+function throwbackPath() { return path.join(usersDir(), '_throwback.json'); }
+
+/** Is this text worth a callback? Not link-only, emoji-only, or too short. */
+function substantive(text) {
+  const t = String(text || '')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/<a?:\w+:\d+>/g, ' ')
+    .replace(/\[\d+ pièce\(s\) jointe\(s\)\]|\[embed\]|\[token masqué\]/g, ' ')
+    .replace(/@\S+/g, ' ')
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Component}\uFE0F]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const letters = (t.match(/\p{L}/gu) || []).length;
+  const words = t.split(' ').filter((w) => /\p{L}{2,}/u.test(w)).length;
+  return letters >= 20 && words >= 4;
+}
+
+function readThrowbackState() {
+  try { return JSON.parse(fs.readFileSync(throwbackPath(), 'utf8')) || {}; } catch { return {}; }
+}
+
+/** Candidates: older than the recent window and older than MIN_AGE, substantive. */
+function throwbackCandidates(userId, { now = Date.now() } = {}) {
+  const entries = readLog(assertId(userId));
+  return entries.slice(0, Math.max(0, entries.length - THROWBACK_SKIP_RECENT))
+    .filter((e) => now - e.t >= THROWBACK_MIN_AGE_MS && substantive(e.c));
+}
+
+/**
+ * Maybe pick one old message for a callback. Rare: ~1/THROWBACK_RATE rolls,
+ * at most once per user per cooldown (persisted). Returns {t, ch, c} or null.
+ */
+function maybeThrowback(userId, { now = Date.now(), rand = Math.random, force = false, dryRun = false } = {}) {
+  const id = assertId(userId);
+  const state = readThrowbackState();
+  const last = Number(state[id] || 0);
+  if (!force && now - last < THROWBACK_COOLDOWN_MS) return null;
+  if (!force && rand() >= 1 / THROWBACK_RATE) return null;
+  const cands = throwbackCandidates(id, { now });
+  if (!cands.length) return null;
+  const e = cands[Math.floor(rand() * cands.length) % cands.length];
+  if (!dryRun) {
+    const next = {};
+    for (const [k, v] of Object.entries(state)) if (now - Number(v) < 2 * THROWBACK_COOLDOWN_MS) next[k] = v;
+    next[id] = now;
+    try {
+      fs.mkdirSync(usersDir(), { recursive: true });
+      atomicWrite(throwbackPath(), JSON.stringify(next));
+    } catch { /* best effort */ }
+  }
+  return { t: fmtTime(e.t), ch: e.cn ? `#${e.cn}` : e.ch, c: truncate(e.c, 300) };
+}
+
 function flush() {
   return Promise.all([...chains.values()]);
 }
@@ -365,4 +424,5 @@ module.exports = {
   readNotes, addNote, removeNote, forget, sensitiveReason,
   isOptedOut, setOptout, loadOptoutFresh,
   history, contextFor, listUsers, flush, fmtTime,
+  substantive, throwbackCandidates, maybeThrowback, THROWBACK_RATE,
 };

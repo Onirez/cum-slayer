@@ -10,13 +10,14 @@ Tout est sur le volume (`data/users/`), **jamais dans git** (`.gitignore`).
 
 | Fichier | Contenu | Limites |
 | --- | --- | --- |
-| `data/users/<id>.log.jsonl` | Un message par ligne : id du message, heure, salon (id + nom), nom affiché, texte, réponse à (message + user), flag bot | 200 derniers messages par personne (`USERMEM_KEEP`), 500 caractères par message, 256 Ko max par fichier |
+| `data/users/<id>.log.jsonl` | Un message par ligne : id du message, heure, salon (id + nom), nom affiché, texte, réponse à (message + user), flag bot | 300 derniers messages par personne (`USERMEM_KEEP`), 500 caractères par message, 384 Ko max par fichier |
 | `data/users/<id>.notes.json` | Notes courtes et factuelles écrites par la routine (surnoms, jeux, running jokes, attitude envers le bot) | 30 notes max, 200 caractères chacune, 3000 caractères au total |
 | `data/users/_optout.json` | Les IDs qui ont demandé à ne plus être enregistrés | — |
+| `data/users/_throwback.json` | Dernier « vieux message » remonté par personne (anti-répétition) | purgé au fil de l'eau |
 
 - Seuls les messages du serveur autorisé sont enregistrés. **Les DM ne sont jamais enregistrés.** Les messages du bot lui-même non plus.
 - Les chaînes qui ressemblent à un token Discord sont masquées avant écriture.
-- Écriture en `append` asynchrone, compactage quand le fichier dépasse 250 lignes. En RAM il n'y a qu'un compteur de lignes par personne : le coût mémoire est négligeable (RSS ~100 Mo sur 256 Mo, inchangé).
+- Écriture en `append` asynchrone, compactage quand le fichier dépasse 375 lignes. En RAM il n'y a qu'un compteur de lignes par personne : le coût mémoire est négligeable (RSS ~100 Mo sur 256 Mo, inchangé).
 
 ## Ce que reçoit la routine
 
@@ -28,7 +29,7 @@ Le payload du webhook contient un bloc `users` :
   "author": {
     "id": "123…", "role": "author", "name": "Pseudo",
     "notes": ["fan de Rocket League", "surnommé « le zgeg » (selon <@456…>)"],
-    "stats": { "logged": 200, "first": "2026-11-05 12:13", "last": "2026-11-23 01:45", "top_channels": ["#blabla", "#cs"] },
+    "stats": { "logged": 300, "first": "2026-11-05 12:13", "last": "2026-11-23 01:45", "top_channels": ["#blabla", "#cs"] },
     "recent": [ { "t": "2026-11-23 01:41", "ch": "#blabla", "c": "texte…", "re": "ID à qui il répondait" } ]
   },
   "others": [ { "id": "…", "role": "replied_to | mentioned", "notes": [], "recent": [] } ]
@@ -36,9 +37,10 @@ Le payload du webhook contient un bloc `users` :
 ```
 
 - `author.recent` : ses 15 derniers messages sur tout le serveur (220 caractères max chacun), sans le message en cours.
+- `author.throwback` (rare, voir plus bas) : un vieux message `{ t, ch, c, hint }`.
 - `others` : jusqu'à 3 personnes (celle à qui il répond, puis les mentionnés), 6 messages chacune.
 - Taille typique du bloc : ~3 Ko. Si le payload dépasse la limite, le pont réduit d'abord ce bloc.
-- Variables : `USERMEM=off` coupe tout, `USERMEM_AUTHOR_LIMIT` (15), `USERMEM_OTHER_LIMIT` (6), `USERMEM_KEEP` (200).
+- Variables : `USERMEM=off` coupe tout, `USERMEM_AUTHOR_LIMIT` (15), `USERMEM_OTHER_LIMIT` (6), `USERMEM_KEEP` (300), `USERMEM_THROWBACK=off` coupe les vieux messages.
 
 ## Outils
 
@@ -46,12 +48,13 @@ Localement `scripts/user.sh`, à distance `deploy/fly/remote-tool.sh user …` (
 
 ```bash
 user.sh get <user_id> [n]                      # notes + n derniers messages
-user.sh history <user_id> [n] [--channel ID] [--search mot]   # plus d'historique (n ≤ 200)
+user.sh history <user_id> [n] [--channel ID] [--search mot]   # plus d'historique (n ≤ 300)
 user.sh note <user_id> <author_id> <texte>     # ajoute une note (≤ 200 car.)
 user.sh unnote <user_id> <note_id>             # retire une note
 user.sh forget <user_id> [all|notes|history]   # supprime ses données (all = aussi data/memory/<id>.json)
 user.sh optout <user_id> / optin <user_id>     # arrête / reprend l'enregistrement
 user.sh list [n]                               # personnes actives récemment
+user.sh throwback <user_id> [--force]          # aperçu du tirage « vieux message » (avec --dry-run : n'écrit rien)
 ```
 
 `--dry-run` marche partout : les commandes d'écriture disent ce qu'elles feraient sans rien écrire.
@@ -63,6 +66,16 @@ Dans `act.sh`, la routine peut aussi écrire des notes dans le même appel que s
 ```
 
 Trois notes max par appel. Une note refusée n'annule pas la réponse : le refus apparaît dans `results.user_notes`.
+
+## « Vieux message » (throwback)
+
+De temps en temps, le pont glisse dans `users.author.throwback` **un ancien message de l'auteur**, pour que le bot puisse lui ressortir un callback ou une pique s'il colle à la conversation.
+
+- Rare : environ **1 déclenchement éligible sur 17** (`USERMEM_THROWBACK_RATE`), et **au plus une fois par personne toutes les 20 h** (`USERMEM_THROWBACK_COOLDOWN_MS`). Le cooldown est gardé dans `data/users/_throwback.json`, donc il survit aux redémarrages.
+- Le message choisi est hors des 15 récents, a **plus de 3 jours** (`USERMEM_THROWBACK_MIN_AGE_MS`), et a du fond : au moins 4 mots et 20 lettres une fois retirés liens, emojis, mentions et pièces jointes.
+- Seulement sur les déclenchements normaux du serveur (salons AGENTS, mention, réponse au bot), jamais en DM ni sur le roast du jour.
+- Le champ vient avec un `hint` : le bot *peut* s'en servir si c'est vraiment drôle, sinon il l'ignore.
+- Coût : une lecture du fichier de la personne au moment du déclenchement, rien en RAM.
 
 ## Garde-fous
 

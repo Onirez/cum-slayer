@@ -109,10 +109,28 @@ function fakeMessage(i, { author = U, guild = '1095123126746099834', content = `
   const ar = JSON.parse(a.stdout.trim().split('\n').pop());
   ok(a.status === 0 && ar.results.user_notes[0].saved && !ar.results.user_notes[1].saved, 'act user_notes saves valid, refuses sensitive');
 
+  // throwback ("vieux message")
+  const W = '333333333333333334';
+  const now = Date.now();
+  const old = [];
+  for (let i = 0; i < 10; i++) old.push(um.makeEntry({ messageId: `7${i}`, channelId: '5', channelName: 'cs', timestamp: now - (10 - i) * 86400000, content: i % 2 ? 'https://example.com/lien' : `je jure que je vais passer global elite avant noël ${i}`, name: 'W' }));
+  for (let i = 0; i < 15; i++) old.push(um.makeEntry({ messageId: `8${i}`, channelId: '5', channelName: 'cs', timestamp: now - 1000 * (15 - i), content: `message récent assez long pour compter ${i}`, name: 'W' }));
+  await um.mergeEntries(W, old);
+  ok(um.throwbackCandidates(W, { now }).length === 4, 'throwback candidates: >3 days old + substantive only (links excluded, recent 15 excluded)');
+  ok(um.maybeThrowback(W, { now, rand: () => 0.99 }) === null, 'throwback is rare (roll miss -> null)');
+  const tb = um.maybeThrowback(W, { now, rand: () => 0 });
+  ok(tb && /global elite/.test(tb.c) && tb.ch === '#cs' && tb.t, 'throwback returns {t, ch, c} of an old message');
+  ok(um.maybeThrowback(W, { now: now + 3600000, rand: () => 0 }) === null, 'throwback cooldown: not twice the same day');
+  ok(fs.existsSync(path.join(process.env.USERMEM_DIR, '_throwback.json')), 'throwback cooldown persisted to disk');
+  ok(um.maybeThrowback(W, { now: now + 21 * 3600000, rand: () => 0 }) !== null, 'throwback allowed again after cooldown');
+  ok(um.maybeThrowback(V, { now, rand: () => 0, force: true }) === null, 'no throwback without old substantive messages');
+  ok(!um.substantive('😂😂 🔥') && !um.substantive('https://x.y/z') && !um.substantive('mdr ok'), 'emoji/link/short messages are not substantive');
+
   // bridge wiring (static)
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'bridge.js'), 'utf8');
   ok(/users: loadUserContext\(/.test(src) && /USERMEM_HINT/.test(src), 'payload carries users block with usage hint');
   ok(/if \(!isDm && USERMEM_ENABLED\)/.test(src), 'logging is guild-only');
+  ok(/trigger !== 'daily_roast'/.test(src) && /author\.throwback = \{ \.\.\.tb, hint: THROWBACK_HINT \}/.test(src), 'throwback wired (not on daily_roast, with hint)');
   const act = require('../src/act_http');
   ok(act.ALLOWED_TOOLS.user === 'user.sh', '/run allows the user tool');
 

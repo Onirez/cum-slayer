@@ -9,6 +9,7 @@
  *   user.sh forget <user_id> [all|notes|history] delete stored data
  *   user.sh optout <user_id> | optin <user_id>   stop / resume logging this user
  *   user.sh list [n]                             most recently active users
+ *   user.sh throwback <user_id> [--force]       preview the 'vieux message' pick (with --dry-run: no state write)
  * --dry-run anywhere: write commands only report what they would do.
  */
 const path = require('path');
@@ -20,7 +21,7 @@ try { legacyMemoryDir = require('./config').MEMORY_DIR; } catch { legacyMemoryDi
 function out(o) { console.log(JSON.stringify(o, null, 2)); }
 function usage(msg) {
   if (msg) console.error(`error: ${msg}`);
-  console.error('Usage: user.sh <get|history|note|unnote|forget|optout|optin|list> ... [--dry-run]');
+  console.error('Usage: user.sh <get|history|note|unnote|forget|optout|optin|list|throwback> ... [--dry-run]');
   process.exit(2);
 }
 
@@ -37,6 +38,8 @@ async function main() {
   };
   const channelId = opt('--channel');
   const search = opt('--search');
+  const force = argv.includes('--force');
+  argv = argv.filter((a) => a !== '--force');
   const [cmd, ...rest] = argv;
   try {
     switch (cmd) {
@@ -48,7 +51,7 @@ async function main() {
       }
       case 'history': {
         if (!rest[0]) usage('missing user_id');
-        const h = um.history(rest[0], { limit: Number(rest[1]) || 50, channelId, search, max: 500 });
+        const h = um.history(rest[0], { limit: Math.min(um.KEEP, Number(rest[1]) || 50), channelId, search, max: 500 });
         out({ userId: rest[0], channel: channelId || undefined, search: search || undefined, ...h });
         return;
       }
@@ -76,6 +79,11 @@ async function main() {
         um.assertId(rest[0]);
         if (!dryRun) um.setOptout(rest[0], cmd === 'optout');
         out({ userId: rest[0], optedOut: cmd === 'optout', dryRun: dryRun || undefined });
+        return;
+      }
+      case 'throwback': {
+        if (!rest[0]) usage('missing user_id');
+        out({ userId: rest[0], candidates: um.throwbackCandidates(rest[0]).length, pick: um.maybeThrowback(rest[0], { force, dryRun }) });
         return;
       }
       case 'list':
