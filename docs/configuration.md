@@ -33,7 +33,7 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | Variable | Défaut | Rôle |
 | --- | --- | --- |
 | `BOT_LOOP_MAX` | `5` | Réponses consécutives à des bots, par salon |
-| `BOT_LOOP_IDLE_MS` | `1800000` | Remise à zéro après cette inactivité (30 min). `BOT_LOOP_WINDOW_MS` est un alias conservé. |
+| `BOT_LOOP_IDLE_MS` | `20000` | Remise à zéro après cette inactivité (20 s). Les messages de bots ignorés pendant la pause ne la prolongent pas. `BOT_LOOP_WINDOW_MS` est un alias conservé. |
 | `BOT_AUTHOR_COOLDOWN_MS` | `5000` | Délai entre deux déclencheurs du même bot |
 | `USER_COOLDOWN_MS` | `10000` | Délai par auteur (humain ou bot) |
 | `GLOBAL_WINDOW_MS` / `GLOBAL_MAX` | 10 min / 20 | Quota global de déclencheurs |

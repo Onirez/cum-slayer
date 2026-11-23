@@ -15,10 +15,10 @@ const CH2 = '222222222222222222';
 const BOT_A = '333333333333333333';
 const BOT_B = '444444444444444444';
 const t0 = 1_700_000_000_000;
-const IDLE = 30 * 60 * 1000;
+const IDLE = 20_000;
 
 const g = new scope.BotLoopGuard({ maxPerWindow: 5, idleMs: IDLE, authorCooldownMs: 5_000 });
-ok(g.max === 5 && g.idleMs === IDLE, 'defaults used: max 5, idle 30 min');
+ok(g.max === 5 && g.idleMs === IDLE, 'defaults used: max 5, idle 20 s');
 
 let allowed = 0;
 let t = t0;
@@ -28,13 +28,13 @@ for (let i = 0; i < 8; i++) {
   t += 6_000;
 }
 ok(allowed === 5, `consecutive cap allows exactly 5 replies (${allowed})`);
-ok(g.isCapped(CH, t), 'isCapped is true after 5 replies');
-ok(!g.check(CH, BOT_A, t).ok && !g.check(CH, BOT_B, t).ok, '6th reply refused for every bot in the channel, including another bot');
+const lastReply = t0 + 6_000 * 4; // 5th record (i=0..4)
+ok(g.isCapped(CH, lastReply + 1), 'isCapped is true after 5 replies');
+ok(!g.check(CH, BOT_A, lastReply + 1).ok && !g.check(CH, BOT_B, lastReply + 1).ok, '6th reply refused for every bot in the channel, including another bot');
 
 // Ignored messages while capped must not extend the idle timer
-const lastReply = t0 + 6_000 * 4; // 5th record (i=0..4)
 ok(!g.check(CH, BOT_A, lastReply + IDLE - 1).ok, 'still capped just before the idle timeout');
-ok(!g.isCapped(CH, lastReply + IDLE) && g.check(CH, BOT_A, lastReply + IDLE).ok, 'streak resets after 30 min idle, even if bots kept talking (we did not record those)');
+ok(!g.isCapped(CH, lastReply + IDLE) && g.check(CH, BOT_A, lastReply + IDLE).ok, 'streak resets after 20 s idle, even if bots kept talking (we did not record those)');
 
 // human reset
 const g2 = new scope.BotLoopGuard({ maxPerWindow: 5, idleMs: IDLE, authorCooldownMs: 0 });
@@ -67,7 +67,7 @@ ok(g5.isCapped(CH, t0 + 59_999) && !g5.isCapped(CH, t0 + 60_000), 'windowMs is a
 
 // constructor defaults
 const g6 = new scope.BotLoopGuard();
-ok(g6.max === 5 && g6.idleMs === 30 * 60 * 1000 && g6.cooldown === 5_000, 'constructor defaults are 5 / 30 min / 5 s');
+ok(g6.max === 5 && g6.idleMs === 20_000 && g6.cooldown === 5_000, 'constructor defaults are 5 / 20 s / 5 s');
 
 // bridge wiring: cap is checked in the bridge, silently, before the webhook
 const src = fs.readFileSync(bridgePath, 'utf8');

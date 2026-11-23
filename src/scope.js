@@ -120,7 +120,7 @@ function decideTrigger(f) {
 class BotLoopGuard {
   constructor({ maxPerWindow = 5, idleMs, windowMs, authorCooldownMs = 5_000 } = {}) {
     this.max = Math.max(1, Number(maxPerWindow) || 5);
-    this.idleMs = Math.max(0, Number(idleMs ?? windowMs ?? 30 * 60 * 1000) || 30 * 60 * 1000);
+    this.idleMs = Math.max(0, Number(idleMs ?? windowMs ?? 20_000) || 20_000);
     this.cooldown = Math.max(0, Number(authorCooldownMs) || 0);
     this.channels = new Map(); // channelId -> { count, lastReplyAt }
     this.lastByAuthor = new Map(); // botAuthorId -> ts

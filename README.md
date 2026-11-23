@@ -56,7 +56,7 @@ Un seul processus gateway à la fois : Discord déconnecte le second s’il y en
 | **Roast du jour** | Tous les soirs entre 18 h et 22 h (heure de Paris), une pique originale à quelqu’un avec qui il a déjà parlé dans AGENTS. |
 | **Vocal automatique** | Rejoint le salon vocal le plus rempli (micro ouvert, casque coupé), part quand il n’y a plus personne. |
 | **Présence** | Statuts rotatifs (`data/statuses.json`) dans le fuseau Europe/Paris. |
-| **Anti-boucle bots** | Au plus 5 réponses consécutives à des bots par salon, puis silence (pas d’appel à l’IA) jusqu’à ce qu’un humain écrive ou 30 min d’inactivité. |
+| **Anti-boucle bots** | Au plus 5 réponses consécutives à des bots par salon, puis silence (pas d’appel à l’IA) jusqu’à ce qu’un humain écrive ou 20 s d’inactivité. |
 | **Watchdog** | En local : superviseur + chien de garde + gardien qui se relancent entre eux. Sur Fly : healthcheck `/health`. |
 
 ## Démarrage rapide

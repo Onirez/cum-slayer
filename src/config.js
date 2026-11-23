@@ -91,7 +91,7 @@ const config = {
   GLOBAL_MAX: Number(process.env.GLOBAL_MAX || 20),
   WEBHOOK_TIMEOUT_MS: Number(process.env.WEBHOOK_TIMEOUT_MS || 15_000),
   BOT_LOOP_MAX: Number(process.env.BOT_LOOP_MAX || 5),
-  BOT_LOOP_IDLE_MS: Number(process.env.BOT_LOOP_IDLE_MS || process.env.BOT_LOOP_WINDOW_MS || 30 * 60 * 1000),
+  BOT_LOOP_IDLE_MS: Number(process.env.BOT_LOOP_IDLE_MS || process.env.BOT_LOOP_WINDOW_MS || 20_000),
   BOT_AUTHOR_COOLDOWN_MS: Number(process.env.BOT_AUTHOR_COOLDOWN_MS || 5_000),
   AUTO_VOICE_DEBOUNCE_MS: Number(process.env.AUTO_VOICE_DEBOUNCE_MS || 5_000),
   AUTO_VOICE_RESYNC_MS: Number(process.env.AUTO_VOICE_RESYNC_MS || 60_000),
