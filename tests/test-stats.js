@@ -83,6 +83,19 @@ ok(compute.frNum(12901) === '12 901', 'French thousand separator');
 
 const empty = compute.computeStats({ usersDir: path.join(tmp, 'nope'), dataDir: path.join(tmp, 'nope'), selfId: SELF, now: NOW });
 ok(empty.messages === 0 && empty.topTalkers.length === 0 && empty.triggers.recorded === 0, 'empty data does not crash');
+ok(s.fullCount == null && empty.fullCount == null, 'full-history KPI stays hidden without a scan file');
+
+fs.writeFileSync(path.join(dataDir, 'full_count.json'), JSON.stringify({
+  total: 12345,
+  humans: 10000,
+  bots: 2345,
+  scannedAt: NOW,
+  scannedAtLabel: '23 nov. 2026 14:00 Europe/Paris',
+  oldestLabel: '14 juil. 2017 12:00 Europe/Paris',
+}));
+const withFull = compute.computeStats({ usersDir, dataDir, selfId: SELF, now: NOW });
+ok(withFull.fullCount && withFull.fullCount.total === 12345 && withFull.fullCount.humans === 10000, 'computeStats loads full_count.json from the data dir');
+ok(withFull.messages === 7 && withFull.messagesRead == null, 'full-history total does not replace stored or live all-time counters');
 
 // --- lifetime ---
 lifetime.resetForTests();
@@ -138,6 +151,18 @@ ok(lifetime.load().images === 0 && lifetime.load().messagesRead === 0, 'corrupt 
   ok(/Compteurs all-time/.test(svgLife.svg) && /Images/.test(svgLife.svg), 'lifetime panel shows when counters exist');
   ok(/Messages lus depuis toujours/.test(svgLife.svg) && /stockés/.test(svgLife.svg), 'header KPI shows all-time reads plus stocked count');
   ok(/depuis le 23 nov\. 2026/.test(svgLife.svg), 'header KPI shows the seed date');
+  ok(!/Total du serveur \(historique complet\)/.test(svgLife.svg), 'full-history banner is hidden when no scan is present');
+  const svgFull = render.buildSvg({
+    ...s,
+    lifetime: life,
+    messagesRead: 8,
+    messagesReadSeededAt: NOW,
+    messagesReadSeedLabel: '23 nov. 2026',
+    fullCount: withFull.fullCount,
+  });
+  ok(/Total du serveur \(historique complet\)/.test(svgFull.svg) && /12 345/.test(svgFull.svg), 'full-history banner shows the scanned total');
+  ok(/scan du 23 nov\. 2026/.test(svgFull.svg) && /Messages lus depuis toujours/.test(svgFull.svg), 'banner shows the scan date and keeps the live all-time KPI');
+  ok(svgFull.height > svgLife.height, 'banner adds height without replacing other panels');
 
   ok(!svg.svg.includes('<script') && !/salut ❤/.test(svg.svg), 'SVG has no script and no message bodies');
   ok(render.fontFiles().length >= 2, 'bundled fonts are found');

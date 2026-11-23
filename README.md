@@ -57,7 +57,7 @@ Un seul processus gateway à la fois : Discord déconnecte le second s’il y en
 | **Vocal automatique** | Rejoint le salon vocal le plus rempli (micro ouvert, casque coupé), part quand il n’y a plus personne. |
 | **Présence** | Statuts rotatifs (`data/statuses.json`) dans le fuseau Europe/Paris. |
 | **Anti-boucle bots** | Au plus 5 réponses consécutives à des bots par salon, puis silence (pas d’appel à l’IA) jusqu’à ce qu’un humain écrive ou 20 s d’inactivité. |
-| **Commandes slash** | `/stats` : infographie des messages stockés, calculée en direct sans IA. `/fiche` : portrait via la routine. `/restart` : réservé au créateur. |
+| **Commandes slash** | `/stats` : infographie calculée en direct sans IA (stock, messages lus depuis toujours, et total historique du serveur si un scan `full_count.json` est présent). `/fiche` : portrait via la routine. `/restart` : réservé au créateur. |
 | **Watchdog** | En local : superviseur + chien de garde + gardien qui se relancent entre eux. Sur Fly : healthcheck `/health`. |
 
 ## Démarrage rapide
@@ -94,7 +94,7 @@ Le déploiement 24 h/24 sur Fly.io est décrit dans [docs/deploiement-fly.md](do
 │   ├── images.js             # Collecte des photos et des vidéos pour le payload
 │   ├── restart.js            # Commande slash /restart (créateur uniquement)
 │   ├── slash.js              # /stats (local, PNG) et /fiche (routine)
-│   ├── stats_compute.js / stats_render.js / lifetime.js
+│   ├── stats_compute.js / stats_render.js / lifetime.js / full_count.js
 │   └── memory.js, skills.js, usermem.js, …
 ├── scripts/                  # Outils appelés par la routine (act.sh, img.sh, vid.sh, …)
 ├── tools/                    # Transcription locale (transcribe.py, setup-whisper.sh) — pas sur Fly

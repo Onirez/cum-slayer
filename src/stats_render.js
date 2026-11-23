@@ -154,6 +154,8 @@ function buildSvg(stats) {
   const gap = 20;
   const headerH = 118;
   const kpiH = 168;
+  const fullDoc = stats.fullCount && Number.isFinite(Number(stats.fullCount.total)) ? stats.fullCount : null;
+  const fullH = fullDoc ? 132 : 0;
   const row1H = 620;
   const row2H = 460;
   const row3H = 480;
@@ -166,6 +168,8 @@ function buildSvg(stats) {
   let y = 32;
   const headerY = y;
   y += headerH + 8;
+  const fullY = fullH ? y : 0;
+  if (fullH) y += fullH + gap;
   const kpiY = y;
   y += kpiH + gap;
   const row1Y = y;
@@ -200,6 +204,26 @@ function buildSvg(stats) {
   s += text(pad + 28, headerY + 96,
     `Ce que le bot a stocké  ·  Le Royaume  ·  ${oldestShort} — ${newestShort}  ·  Europe/Paris`,
     { size: 20, weight: 500, color: MUTED });
+
+  // Full guild history (when a scan result is on disk)
+  if (fullDoc) {
+    s += card(pad, fullY, innerW, fullH);
+    s += rounded(pad + 20, fullY + 16, 36, 6, 3, GOLD);
+    const big = String(frNum(fullDoc.total));
+    const bigSize = big.length >= 8 ? 42 : 52;
+    s += text(pad + 28, fullY + 72, big, { size: bigSize, weight: 700, family: 'Outfit', color: GOLD });
+    s += text(pad + 28, fullY + 104, 'Total du serveur (historique complet)', { size: 18, weight: 600 });
+    const scanShort = fullDoc.scannedAtShort || (fullDoc.scannedAtLabel || '').replace(/\s\d{2}:\d{2}.*$/, '') || '';
+    const midX = pad + 520;
+    const hb = `${frNum(fullDoc.humans || 0)} humains  ·  ${frNum(fullDoc.bots || 0)} bots`;
+    s += text(midX, fullY + 52, 'Scan complet du serveur', { size: 16, weight: 600, family: 'Outfit' });
+    if (scanShort) s += text(midX, fullY + 78, `scan du ${scanShort}`, { size: 15, weight: 500, color: MUTED });
+    s += text(midX, fullY + 104, hb, { size: 15, weight: 500, color: MUTED });
+    if (fullDoc.oldestLabel) {
+      const first = String(fullDoc.oldestLabel).replace(/\sEurope\/Paris$/, '');
+      s += text(pad + innerW - 24, fullY + 78, `1er message :  ${first}`, { size: 14, weight: 500, color: DIM, anchor: 'end' });
+    }
+  }
 
   // KPIs
   const readN = Number(stats.messagesRead);
@@ -481,6 +505,8 @@ async function renderFresh(opts = {}) {
       dataDir: opts.dataDir,
       triggersFile: opts.triggersFile,
       lifetime: lifetime && require('./lifetime').hasData(lifetime) ? lifetime : null,
+      fullCount: opts.fullCount,
+      fullCountFile: opts.fullCountFile,
       selfId,
       now: opts.now || Date.now(),
     });

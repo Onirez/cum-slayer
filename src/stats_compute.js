@@ -169,11 +169,38 @@ function plainChannelName(cn, ch) {
   return stripped || raw;
 }
 
+
+function loadFullCount(root, injected, file) {
+  if (injected !== undefined) {
+    if (injected == null) return null;
+    if (typeof injected === 'object' && Number.isFinite(Number(injected.total))) {
+      return {
+        total: Number(injected.total),
+        humans: Number(injected.humans) || 0,
+        bots: Number(injected.bots) || 0,
+        scannedAt: injected.scannedAt || null,
+        scannedAtLabel: injected.scannedAtLabel || (injected.scannedAt ? `${fmtParis(injected.scannedAt)} Europe/Paris` : null),
+        scannedAtShort: injected.scannedAt ? fmtParis(injected.scannedAt, false) : (injected.scannedAtShort || null),
+        oldestLabel: injected.oldestLabel || null,
+        busiestMonth: injected.busiestMonth || null,
+        noAccessCount: Array.isArray(injected.noAccess) ? injected.noAccess.length : (Number(injected.noAccessCount) || 0),
+      };
+    }
+    return null;
+  }
+  const pth = file || process.env.FULL_COUNT_FILE || path.join(root, 'full_count.json');
+  const doc = readJson(pth, null);
+  if (!doc || typeof doc !== 'object' || !Number.isFinite(Number(doc.total))) return null;
+  return loadFullCount(root, doc, file);
+}
+
 function computeStats({
   usersDir,
   dataDir,
   triggersFile,
   lifetime,
+  fullCount,
+  fullCountFile,
   selfId,
   now = Date.now(),
 } = {}) {
@@ -401,6 +428,7 @@ function computeStats({
     messagesReadSeedLabel: lifetimeDoc && lifetimeDoc.messagesReadSeededAt
       ? fmtParis(lifetimeDoc.messagesReadSeededAt, false)
       : null,
+    fullCount: loadFullCount(root, fullCount, fullCountFile),
     frNum,
     fmtParis,
   };
@@ -410,6 +438,7 @@ module.exports = {
   computeStats,
   defaultSelfId,
   usersDirFrom,
+  loadFullCount,
   frNum,
   fmtParis,
   parisParts,

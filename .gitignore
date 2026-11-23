@@ -52,4 +52,9 @@ tools/whisper-venv/
 
 # /stats all-time counters and rendered samples (runtime only)
 data/lifetime.json
+data/full_count.json
+data/full_count.progress.json
+data/full_count.state.json
+data/full_count.log
+data/full_count.lock
 stats.png

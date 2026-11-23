@@ -33,4 +33,9 @@ data/slash-ix/
 models
 tools/whisper-venv
 data/lifetime.json
+data/full_count.json
+data/full_count.progress.json
+data/full_count.state.json
+data/full_count.log
+data/full_count.lock
 stats.png
