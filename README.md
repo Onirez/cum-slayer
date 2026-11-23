@@ -91,6 +91,7 @@ Le déploiement 24 h/24 sur Fly.io est décrit dans [docs/deploiement-fly.md](do
 │   ├── roast.js              # Roast du jour
 │   ├── images.js             # Collecte des photos pour le payload
 │   ├── restart.js            # Commande slash /restart (créateur uniquement)
+│   ├── slash.js              # /classement (local) et /fiche (routine)
 │   └── memory.js, skills.js, usermem.js, …
 ├── scripts/                  # Outils appelés par la routine (act.sh, img.sh, …)
 ├── deploy/fly/               # Fly.io (Dockerfile, fly.toml, deploy-fly.sh)

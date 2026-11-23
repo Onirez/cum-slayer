@@ -20,6 +20,7 @@ const roast = require('./roast');
 const userMem = require('./usermem');
 const images = require('./images');
 const restart = require('./restart');
+const slash = require('./slash');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
 
@@ -1069,14 +1070,14 @@ function onReady(c) {
 
 async function registerSlashCommands(c) {
   try {
-    const guildIds = [...allowedGuilds];
-    await restart.registerRestartCommand({
+    await slash.registerGuildCommands({
       applicationCommands: c.application.commands,
-      guildIds,
+      guildIds: [...allowedGuilds],
+      commands: [restart.commandPayload(), slash.classementPayload(), slash.fichePayload()],
       log,
     });
   } catch (err) {
-    log(`slash /restart registration failed: ${err.message}`);
+    log(`slash command registration failed: ${err.message}`);
   }
 }
 
@@ -1349,6 +1350,141 @@ function mod() {
   return modLib;
 }
 
+function slashAuthor(interaction) {
+  return {
+    id: interaction.user.id,
+    username: interaction.user.username,
+    display_name: interaction.member?.displayName || interaction.user.globalName || interaction.user.username,
+    bot: Boolean(interaction.user.bot),
+  };
+}
+
+function slashAllowed(interaction) {
+  if (!interaction.guildId) return false;
+  return allowedGuilds.has(interaction.guildId);
+}
+
+async function handleClassementCommand(interaction) {
+  if (!slashAllowed(interaction)) {
+    await interaction.reply({ content: 'Serveur non autorisé.', flags: 64 }).catch(() => {});
+    return;
+  }
+  const userId = interaction.user.id;
+  const now = Date.now();
+  const cd = slash.checkCooldown(slash.CLASSEMENT, userId, slash.CLASSEMENT_COOLDOWN_MS, now);
+  if (!cd.ok) {
+    await interaction.reply({ content: slash.COOLDOWN_CLASSEMENT, flags: 64 }).catch(() => {});
+    return;
+  }
+  slash.markCooldown(slash.CLASSEMENT, userId, now);
+  const period = interaction.options.getString('periode') || '7j';
+  const channel = interaction.options.getChannel('salon');
+  const board = userMem.leaderboard({
+    period,
+    channelId: channel?.id || null,
+    limit: 10,
+    now,
+    selfId: client.user?.id,
+  });
+  const embed = slash.buildClassementEmbed({
+    period: board.period,
+    channelName: channel?.name || null,
+    rows: board.rows,
+  });
+  log(`slash /classement user=${userId} period=${board.period} channel=${channel?.id || 'all'} rows=${board.rows.length}`);
+  await interaction.reply({
+    embeds: [embed],
+    allowedMentions: { parse: [] },
+  }).catch((err) => log(`slash /classement reply failed: ${err.message}`));
+}
+
+async function handleFicheCommand(interaction) {
+  if (!slashAllowed(interaction)) {
+    await interaction.reply({ content: 'Serveur non autorisé.', flags: 64 }).catch(() => {});
+    return;
+  }
+  const userId = interaction.user.id;
+  const now = Date.now();
+  const cd = slash.checkCooldown(slash.FICHE, userId, slash.FICHE_COOLDOWN_MS, now);
+  if (!cd.ok) {
+    await interaction.reply({ content: slash.COOLDOWN_FICHE, flags: 64 }).catch(() => {});
+    return;
+  }
+  const hourly = slash.checkFicheHourly(now);
+  const targetUser = interaction.options.getUser('membre');
+  const targetMember = interaction.options.getMember('membre');
+  const target = targetUser ? {
+    id: targetUser.id,
+    username: targetUser.username,
+    display_name: targetMember?.displayName || targetUser.globalName || targetUser.username,
+    bot: Boolean(targetUser.bot),
+  } : null;
+  const decision = slash.decideFiche({
+    target,
+    selfId: client.user?.id,
+    isOptedOut: (id) => userMem.isOptedOut(id),
+    context: (id) => userMem.contextFor(id, { limit: USERMEM_AUTHOR_LIMIT, max: 220, role: 'target' }),
+  });
+  slash.markCooldown(slash.FICHE, userId, now);
+  if (!decision.ok) {
+    log(`slash /fiche local user=${userId} target=${target && target.id} reason=${decision.reason}`);
+    await interaction.reply({ content: decision.reply, allowedMentions: { parse: [] } }).catch(() => {});
+    return;
+  }
+  if (!hourly.ok) {
+    await interaction.reply({ content: slash.HOURLY_FICHE, flags: 64 }).catch(() => {});
+    return;
+  }
+  if (!webhookConfigured()) {
+    await interaction.reply({ content: 'Le cerveau est hors-ligne. Réessaie plus tard.', flags: 64 }).catch(() => {});
+    return;
+  }
+
+  await interaction.deferReply();
+  slash.markFicheHourly(now);
+  const applicationId = interaction.applicationId || client.application?.id || BOT_APP_ID;
+  slash.savePending({
+    id: interaction.id,
+    applicationId,
+    token: interaction.token,
+    channelId: interaction.channelId,
+    guildId: interaction.guildId,
+    userId,
+    now,
+  });
+  const inAgents = channelInAgents(interaction.guild, interaction.channelId);
+  const payload = slash.buildFichePayload({
+    guildId: interaction.guildId,
+    channelId: interaction.channelId,
+    inAgents,
+    requester: slashAuthor(interaction),
+    target,
+    targetContext: decision.context,
+    interactionId: interaction.id,
+  });
+  if (slash.payloadContainsSecret(payload, interaction.token)) {
+    log('slash /fiche aborted: payload would have included the interaction token');
+    try {
+      await slash.followUpFiche({ applicationId, token: interaction.token, content: 'J\'ai merdé, réessaie.' });
+    } catch (err) {
+      log(`slash /fiche token-guard follow-up failed: ${err.message}`);
+    }
+    slash.deletePending(interaction.id);
+    return;
+  }
+  log(`slash /fiche user=${userId} target=${target.id} interaction=${interaction.id} in_agents=${inAgents}`);
+  const ok = await postWebhook(shrinkPayload(payload) || payload);
+  if (!ok) {
+    log(`slash /fiche webhook failed interaction=${interaction.id}`);
+    try {
+      await slash.followUpFiche({ applicationId, token: interaction.token, content: 'J\'ai merdé, réessaie.' });
+    } catch (err) {
+      log(`slash /fiche failure follow-up failed: ${err.message}`);
+    }
+    slash.deletePending(interaction.id);
+  }
+}
+
 async function handleRestartCommand(interaction) {
   const userId = interaction.user?.id;
   const decision = restart.decideRestart({
@@ -1378,9 +1514,20 @@ async function handleRestartCommand(interaction) {
 
 client.on('interactionCreate', async (interaction) => {
   try {
-    if (interaction.isChatInputCommand() && interaction.commandName === restart.COMMAND_NAME) {
-      await handleRestartCommand(interaction);
-      return;
+    if (interaction.isChatInputCommand()) {
+      const name = interaction.commandName;
+      if (name === restart.COMMAND_NAME) {
+        await handleRestartCommand(interaction);
+        return;
+      }
+      if (name === slash.CLASSEMENT) {
+        await handleClassementCommand(interaction);
+        return;
+      }
+      if (name === slash.FICHE) {
+        await handleFicheCommand(interaction);
+        return;
+      }
     }
     if (!interaction.isButton()) return;
     const m = PLAN_BUTTON_RE.exec(interaction.customId || '');
@@ -1415,8 +1562,9 @@ client.on('interactionCreate', async (interaction) => {
   } catch (err) {
     log(`interactionCreate error: ${err.message}`);
     try {
-      if (interaction.deferred || interaction.replied) await interaction.followUp({ content: 'Erreur pendant le traitement du plan.', flags: 64 });
-      else await interaction.reply({ content: 'Erreur pendant le traitement du plan.', flags: 64 });
+      const msg = interaction.isChatInputCommand?.() ? 'Erreur pendant la commande.' : 'Erreur pendant le traitement du plan.';
+      if (interaction.deferred || interaction.replied) await interaction.followUp({ content: msg, flags: 64 });
+      else await interaction.reply({ content: msg, flags: 64 });
     } catch { /* ignore */ }
   }
 });

@@ -341,6 +341,62 @@ function contextFor(userId, { limit = 20, excludeId = null, max = 300, role = 'a
   };
 }
 
+const PERIOD_MS = {
+  '7j': 7 * 24 * 60 * 60 * 1000,
+  '30j': 30 * 24 * 60 * 60 * 1000,
+  tout: null,
+};
+
+/**
+ * Top-N most active human members from usermem logs.
+ * Skips opted-out users and bots (entries flagged `b`). Optional period
+ * ('7j' | '30j' | 'tout') and channel id. Pure disk read, no network.
+ */
+function leaderboard({ period = '7j', channelId = null, limit = 10, now = Date.now(), selfId = null } = {}) {
+  const key = Object.prototype.hasOwnProperty.call(PERIOD_MS, period) ? period : '7j';
+  const window = PERIOD_MS[key];
+  const since = window == null ? null : now - window;
+  const ch = channelId ? String(channelId) : null;
+  let files = [];
+  try { files = fs.readdirSync(usersDir()); } catch { return { period: key, since, channel_id: ch, rows: [] }; }
+  const ids = new Set();
+  for (const f of files) {
+    const m = f.match(/^(\d{5,30})\.log\.jsonl$/);
+    if (m) ids.add(m[1]);
+  }
+  const rows = [];
+  for (const id of ids) {
+    if (selfId && id === String(selfId)) continue;
+    if (isOptedOut(id)) continue;
+    const all = readLog(id);
+    if (all.some((e) => e && e.b)) continue;
+    const entries = all.filter((e) => {
+      if (since != null && !(Number(e.t) >= since)) return false;
+      if (ch && e.ch !== ch) return false;
+      return true;
+    });
+    if (!entries.length) continue;
+    const byCh = new Map();
+    for (const e of entries) {
+      const k = e.cn ? `#${e.cn}` : e.ch;
+      byCh.set(k, (byCh.get(k) || 0) + 1);
+    }
+    const top = [...byCh.entries()].sort((a, b) => b[1] - a[1])[0];
+    const name = [...entries].reverse().find((e) => e.n)?.n
+      || [...all].reverse().find((e) => e.n)?.n
+      || null;
+    rows.push({
+      id,
+      name,
+      count: entries.length,
+      top_channel: top ? top[0] : null,
+    });
+  }
+  rows.sort((a, b) => b.count - a.count || String(a.name || a.id).localeCompare(String(b.name || b.id)));
+  const n = Math.max(1, Math.min(25, Number(limit) || 10));
+  return { period: key, since, channel_id: ch, rows: rows.slice(0, n) };
+}
+
 function listUsers(limit = 30) {
   let files = [];
   try { files = fs.readdirSync(usersDir()); } catch { return []; }
@@ -423,6 +479,6 @@ module.exports = {
   append, recordMessage, mergeEntries, readLog,
   readNotes, addNote, removeNote, forget, sensitiveReason,
   isOptedOut, setOptout, loadOptoutFresh,
-  history, contextFor, listUsers, flush, fmtTime,
+  history, contextFor, listUsers, leaderboard, PERIOD_MS, flush, fmtTime,
   substantive, throwbackCandidates, maybeThrowback, THROWBACK_RATE,
 };

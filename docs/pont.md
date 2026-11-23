@@ -24,6 +24,13 @@ Pour chaque message, `src/scope.js` `decideTrigger` produit l’un des identifia
 
 Les messages du bot lui-même ne déclenchent jamais.
 
+## Commandes `/classement` et `/fiche`
+
+- `/classement` `[periode]` `[salon]` : classement local des 10 membres les plus actifs, calculé sur les logs usermem (7 jours par défaut, 30 jours, ou tout). Sans IA, embed public, sans ping. Ignore les bots et les comptes opt-out. Délai 30 s par utilisateur.
+- `/fiche membre:@user` : portrait rôti via la routine (`trigger: "slash_fiche"`). Le pont diffère l'interaction, envoie notes / stats / messages récents de la **cible**, et la routine répond avec `act.sh` + `interaction_id` (le jeton d'interaction reste sur le pont, il n'est jamais dans le payload). Si la cible a opté out ou n'a aucune donnée, réponse locale sans IA. Délai 60 s par utilisateur, plafond 20 fiches IA par heure.
+
+Si le paragraphe `/restart` n'est pas juste au-dessus, voir plus bas.
+
 ## Commande `/restart`
 
 Commande slash enregistrée sur le serveur (pas en global), visible par défaut seulement des administrateurs. Seul le créateur (`CREATOR_ID`) peut l’utiliser : le pont vérifie `interaction.user.id`, jamais un nom. Toute autre personne reçoit un refus éphémère. Le créateur reçoit « Redémarrage… » (éphémère), le client est détruit, le processus sort en code 1, et Fly relance la machine (`[[restart]] policy = "on-failure"`). Délai de 30 s entre deux redémarrages dans le même processus.

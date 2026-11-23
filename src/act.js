@@ -18,6 +18,7 @@ const {
 
 const { runActions, createPlan, classify } = require('./mod');
 const scope = require('./scope');
+const slash = require('./slash');
 
 const DIR = __dirname;
 
@@ -134,6 +135,7 @@ async function main() {
 
   const channelId = body.channel_id ? String(body.channel_id) : '';
   const messageId = body.message_id ? String(body.message_id) : '';
+  const interactionId = body.interaction_id ? String(body.interaction_id) : '';
   const reply = body.reply == null || body.reply === '' ? null : String(body.reply);
   const react = body.react == null || body.react === '' ? null : String(body.react);
   const memoryAppend = Array.isArray(body.memory_append) ? body.memory_append : [];
@@ -142,7 +144,7 @@ async function main() {
   const authorId = body.author_id ? String(body.author_id) : '';
   const actions = Array.isArray(body.actions) ? body.actions : [];
 
-  if ((reply || react) && !channelId) {
+  if ((reply || react) && !channelId && !interactionId) {
     console.error('error: channel_id is required when reply or react is set');
     process.exit(2);
   }
@@ -153,24 +155,49 @@ async function main() {
 
   const results = { reply: null, react: null, actions: [], plan: null, memory_append: [], user_notes: [], skill_create: null };
 
-  // Discord Agent Rules: no unsolicited messages. The target must be a
-  // recorded bridge trigger, or the channel must be in AGENTS / an interacted DM.
-  const trig = messageId ? scope.triggerRecord(messageId) : null;
-  if ((reply !== null || react !== null) && !trig) {
-    try { await scope.assertMaySpeakIn(channelId); } catch (e) {
-      console.error(`error: ${e.message}`);
+  // /fiche follow-up: edit the deferred interaction. The token stays in the
+  // bridge store and is never accepted from the JSON (ignore body.token).
+  if (interactionId) {
+    const rec = slash.getPending(interactionId);
+    if (!rec) {
+      console.error('error: unknown or expired interaction_id');
       process.exit(3);
     }
-  }
+    if (reply !== null) {
+      try {
+        results.reply = await slash.followUpFiche({
+          applicationId: rec.application_id,
+          token: rec.token,
+          content: reply,
+          dryRun,
+        });
+        if (!dryRun) slash.deletePending(interactionId);
+        console.log(`posted fiche follow-up interaction_id=${interactionId} dry=${dryRun ? 1 : 0}`);
+      } catch (err) {
+        console.error(`error: ${err.message}`);
+        process.exit(1);
+      }
+    }
+  } else {
+    // Discord Agent Rules: no unsolicited messages. The target must be a
+    // recorded bridge trigger, or the channel must be in AGENTS / an interacted DM.
+    const trig = messageId ? scope.triggerRecord(messageId) : null;
+    if ((reply !== null || react !== null) && !trig) {
+      try { await scope.assertMaySpeakIn(channelId); } catch (e) {
+        console.error(`error: ${e.message}`);
+        process.exit(3);
+      }
+    }
 
-  // Reply first for speed. message_id null => standalone message in channel_id
-  // (e.g. daily_roast); the guard above only lets that through in AGENTS
-  // channels, channels with a recent trigger, or interacted DMs.
-  if (reply !== null && !messageId) {
-    results.reply = await sendStandalone(channelId, reply, dryRun);
-  } else if (reply !== null) {
-    results.reply = await sendReply(channelId, messageId, reply, dryRun);
-    if (!dryRun && trig && trig.author_id) scope.recordInteraction(trig.author_id, 'replied');
+    // Reply first for speed. message_id null => standalone message in channel_id
+    // (e.g. daily_roast); the guard above only lets that through in AGENTS
+    // channels, channels with a recent trigger, or interacted DMs.
+    if (reply !== null && !messageId) {
+      results.reply = await sendStandalone(channelId, reply, dryRun);
+    } else if (reply !== null) {
+      results.reply = await sendReply(channelId, messageId, reply, dryRun);
+      if (!dryRun && trig && trig.author_id) scope.recordInteraction(trig.author_id, 'replied');
+    }
   }
 
   if (react !== null) {
