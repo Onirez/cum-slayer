@@ -153,7 +153,7 @@ function buildSvg(stats) {
   const pad = 40;
   const gap = 20;
   const headerH = 118;
-  const kpiH = 148;
+  const kpiH = 168;
   const row1H = 620;
   const row2H = 460;
   const row3H = 480;
@@ -202,8 +202,12 @@ function buildSvg(stats) {
     { size: 20, weight: 500, color: MUTED });
 
   // KPIs
+  const readN = Number(stats.messagesRead);
+  const hasRead = Number.isFinite(readN) && (readN > 0 || stats.messagesReadSeededAt);
   const kpis = [
-    [frNum(stats.messages), 'Messages stockés', stats.oldestLabel && stats.newestLabel ? `${oldestShort} → ${newestShort.replace(/\s\d{2}:\d{2}$/, '')}` : ''],
+    hasRead
+      ? null
+      : [frNum(stats.messages), 'Messages stockés', stats.oldestLabel && stats.newestLabel ? `${oldestShort} → ${newestShort.replace(/\s\d{2}:\d{2}$/, '')}` : ''],
     [frNum(stats.users), 'Membres avec un log', `${stats.humanUsers} humains  ·  ${stats.botUsers} bots`],
     [frNum(stats.triggers.recorded), 'Déclenchements', stats.triggers.oldestLabel ? `depuis le ${stats.triggers.oldestLabel}` : 'fenêtre récente (max 300)'],
     [frNum(stats.attachments.units), 'Pièces jointes', `dans ${frNum(stats.attachments.messages)} messages`],
@@ -212,6 +216,16 @@ function buildSvg(stats) {
     const x = pad + i * (kpiW + kpiGap);
     s += card(x, kpiY, kpiW, kpiH);
     s += rounded(x + 20, kpiY + 14, 32, 6, 3, BLURPLE);
+    if (i === 0 && hasRead) {
+      const big = String(frNum(Math.max(readN, stats.messages || 0)));
+      const bigSize = big.length >= 7 ? 38 : 44;
+      s += text(x + 20, kpiY + 64, big, { size: bigSize, weight: 700, family: 'Outfit' });
+      s += text(x + 20, kpiY + 90, 'Messages lus depuis toujours', { size: 13, weight: 600 });
+      s += text(x + 20, kpiY + 116, `stockés :  ${frNum(stats.messages)}`, { size: 15, weight: 500, color: MUTED });
+      const since = stats.messagesReadSeedLabel ? `depuis le ${stats.messagesReadSeedLabel}` : '';
+      if (since) s += text(x + 20, kpiY + 140, since, { size: 13, weight: 400, color: DIM });
+      return;
+    }
     s += text(x + 20, kpiY + 72, k[0], { size: 46, weight: 700, family: 'Outfit' });
     s += text(x + 20, kpiY + 104, k[1], { size: 16, weight: 600 });
     s += text(x + 20, kpiY + 128, k[2], { size: 14, weight: 400, color: DIM });
@@ -456,7 +470,12 @@ async function renderFresh(opts = {}) {
   return withRenderLock(async () => {
     const selfId = opts.selfId || defaultSelfId();
     const usersDir = opts.usersDir || usersDirFrom(opts.dataDir);
-    const lifetime = opts.lifetime !== undefined ? opts.lifetime : require('./lifetime').load();
+    let lifetime = opts.lifetime;
+    if (lifetime === undefined) {
+      const lt = require('./lifetime');
+      lt.ensureSeeded(usersDir);
+      lifetime = lt.load();
+    }
     const stats = computeStats({
       usersDir,
       dataDir: opts.dataDir,

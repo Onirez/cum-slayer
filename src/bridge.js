@@ -1111,6 +1111,12 @@ async function registerSlashCommands(c) {
   } catch (err) {
     log(`slash retired command cleanup failed: ${err.message}`);
   }
+  try {
+    const seeded = lifetime.ensureSeeded();
+    log(`lifetime messages-read seeded=${Boolean(seeded.messagesReadSeededAt)} total=${seeded.messagesRead} seed=${seeded.messagesReadSeedCount}`);
+  } catch (err) {
+    log(`lifetime seed failed: ${err.message}`);
+  }
 }
 
 client.once('clientReady', onReady);
@@ -1263,6 +1269,7 @@ client.on('messageCreate', async (message) => {
       // on ourselves (return below): no webhook, no throwback, no self-reply.
       if (message.guildId && USERMEM_ENABLED && allowedGuilds.has(message.guildId) && !message.system) {
         userMem.recordMessage(message, { selfId: client.user.id }).catch((err) => log(`warn: usermem self append failed: ${err.message}`));
+        try { lifetime.noteGuildMessage(message.id); } catch (err) { log(`warn: lifetime message count failed: ${err.message}`); }
       }
       // Conversation follow: open/refresh a short window in this guild
       // channel. Slash responses (/stats, /fiche, /restart) do not start one.
@@ -1310,6 +1317,9 @@ client.on('messageCreate', async (message) => {
     // Per-user memory: log every guild message (never DMs). Fire-and-forget.
     if (!isDm && USERMEM_ENABLED) {
       userMem.recordMessage(message, { selfId: client.user?.id }).catch((err) => log(`warn: usermem append failed: ${err.message}`));
+    }
+    if (!isDm) {
+      try { lifetime.noteGuildMessage(message.id); } catch (err) { log(`warn: lifetime message count failed: ${err.message}`); }
     }
     // All-time media counters (guild only, cheap: no download).
     if (!isDm && (message.attachments?.size || message.embeds?.length)) {
@@ -1882,6 +1892,7 @@ process.on('uncaughtException', (err) => {
 
 process.on('SIGINT', () => {
   log('received SIGINT, shutting down');
+  try { lifetime.flush(); } catch { /* ignore */ }
   stopAllTypingLoops();
   stopAutoVoice();
   stopPresenceRotation();
@@ -1891,6 +1902,7 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   log('received SIGTERM, shutting down');
+  try { lifetime.flush(); } catch { /* ignore */ }
   stopAllTypingLoops();
   stopAutoVoice();
   stopPresenceRotation();

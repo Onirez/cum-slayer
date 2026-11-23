@@ -8,6 +8,7 @@
  * bot cannot read. Merges with existing logs (dedupe by message id).
  */
 const um = require('./usermem');
+const lifetime = require('./lifetime');
 
 let cfg = {};
 try { cfg = require('./config'); } catch { /* box layout */ }
@@ -111,10 +112,15 @@ async function main() {
   }
   let written = 0;
   if (!dryRun) {
+    try { lifetime.ensureSeeded(); } catch { /* still count unique ids */ }
     for (const [id, entries] of perUser) {
       await um.mergeEntries(id, entries);
+      for (const e of entries) {
+        if (e && e.m) lifetime.noteGuildMessage(e.m);
+      }
       written++;
     }
+    try { lifetime.flush(); } catch { /* ignore */ }
   }
   console.log(JSON.stringify({ guild: GUILD_ID, dryRun, selfOnly, perChannel: PER_CHANNEL, channels: report, messages: total, users: perUser.size, usersWritten: written }, null, 1));
 }

@@ -393,6 +393,14 @@ function computeStats({
       newestLabel: trigNewest != null ? fmtParis(trigNewest) : null,
     },
     lifetime: lifetimeDoc,
+    messagesRead: lifetimeDoc && Number.isFinite(Number(lifetimeDoc.messagesRead))
+      ? Math.max(Number(lifetimeDoc.messagesRead), total)
+      : null,
+    messagesReadSeededAt: lifetimeDoc && lifetimeDoc.messagesReadSeededAt ? lifetimeDoc.messagesReadSeededAt : null,
+    messagesReadSeedCount: lifetimeDoc && lifetimeDoc.messagesReadSeedCount ? lifetimeDoc.messagesReadSeedCount : null,
+    messagesReadSeedLabel: lifetimeDoc && lifetimeDoc.messagesReadSeededAt
+      ? fmtParis(lifetimeDoc.messagesReadSeededAt, false)
+      : null,
     frNum,
     fmtParis,
   };

@@ -85,6 +85,7 @@ const empty = compute.computeStats({ usersDir: path.join(tmp, 'nope'), dataDir: 
 ok(empty.messages === 0 && empty.topTalkers.length === 0 && empty.triggers.recorded === 0, 'empty data does not crash');
 
 // --- lifetime ---
+lifetime.resetForTests();
 ok(!lifetime.hasData(lifetime.load()), 'lifetime starts empty');
 lifetime.bumpTrigger('mention');
 lifetime.bumpTrigger('mention');
@@ -97,16 +98,47 @@ ok(life.triggers.mention === 2 && life.triggers.follow === 1, 'lifetime counts t
 ok(life.images === 2 && life.videos === 1, 'lifetime counts images and videos separately');
 ok(life.stats === 1 && life.startedAt > 0, 'lifetime counts /stats and records a start time');
 ok(!('fiche' in life) && !('classement' in life), 'no /fiche or /classement counters');
+
+const seeded = lifetime.ensureSeeded(usersDir);
+ok(seeded.messagesRead === 7 && seeded.messagesReadSeedCount === 7 && seeded.messagesReadSeededAt, 'seed equals the number of stored log entries (7)');
+ok(lifetime.noteGuildMessage('a1').counted === false && lifetime.load().messagesRead === 7, 'seeded ids are not counted twice');
+ok(lifetime.noteGuildMessage('brand-new-1').counted === true && lifetime.load().messagesRead === 8, 'a new message id increments the all-time counter');
+ok(lifetime.noteGuildMessage('brand-new-1').counted === false && lifetime.load().messagesRead === 8, 'the same message id is ignored on a second sighting');
+ok(lifetime.noteGuildMessage('s1').counted === false, 'the bot\'s own already-stored message is not double-counted');
+lifetime.flush();
+lifetime.resetForTests();
+ok(lifetime.load().messagesRead === 8, 'the counter survives a restart (reload from disk)');
+ok(lifetime.noteGuildMessage('brand-new-1').counted === false && lifetime.load().messagesRead === 8, 'reload still remembers the id, no double count');
+ok(lifetime.load().messagesRead >= 7, 'the counter never drops below the seed stock');
+
+const prevEnvMs = process.env.LIFETIME_FLUSH_MS;
+const prevEnvN = process.env.LIFETIME_FLUSH_EVERY;
+process.env.LIFETIME_FLUSH_MS = '60000';
+process.env.LIFETIME_FLUSH_EVERY = '1000';
+lifetime.noteGuildMessage('brand-new-2');
+const onDisk = JSON.parse(fs.readFileSync(process.env.LIFETIME_FILE, 'utf8'));
+ok(onDisk.messagesRead === 8, 'debounced write: a single increment is not flushed immediately');
+lifetime.flush();
+const flushed = JSON.parse(fs.readFileSync(process.env.LIFETIME_FILE, 'utf8'));
+ok(flushed.messagesRead === 9, 'flush persists the pending increment');
+if (prevEnvMs === undefined) delete process.env.LIFETIME_FLUSH_MS; else process.env.LIFETIME_FLUSH_MS = prevEnvMs;
+if (prevEnvN === undefined) delete process.env.LIFETIME_FLUSH_EVERY; else process.env.LIFETIME_FLUSH_EVERY = prevEnvN;
+
+lifetime.flush();
+lifetime.resetForTests();
 fs.writeFileSync(process.env.LIFETIME_FILE, '{broken');
-ok(lifetime.load().images === 0, 'corrupt lifetime file falls back to zeros');
+ok(lifetime.load().images === 0 && lifetime.load().messagesRead === 0, 'corrupt lifetime file falls back to zeros');
 
 // --- render ---
 (async () => {
   const svg = render.buildSvg({ ...s, lifetime: null });
   ok(svg.width === 1600 && svg.height > 2000 && /Top 10 bavards/.test(svg.svg), 'SVG layout has the expected panels');
   ok(!/Compteurs all-time/.test(svg.svg), 'no lifetime panel without data');
-  const svgLife = render.buildSvg({ ...s, lifetime: life });
+  const svgLife = render.buildSvg({ ...s, lifetime: life, messagesRead: 8, messagesReadSeededAt: NOW, messagesReadSeedLabel: '23 nov. 2026' });
   ok(/Compteurs all-time/.test(svgLife.svg) && /Images/.test(svgLife.svg), 'lifetime panel shows when counters exist');
+  ok(/Messages lus depuis toujours/.test(svgLife.svg) && /stockés/.test(svgLife.svg), 'header KPI shows all-time reads plus stocked count');
+  ok(/depuis le 23 nov\. 2026/.test(svgLife.svg), 'header KPI shows the seed date');
+
   ok(!svg.svg.includes('<script') && !/salut ❤/.test(svg.svg), 'SVG has no script and no message bodies');
   ok(render.fontFiles().length >= 2, 'bundled fonts are found');
 
