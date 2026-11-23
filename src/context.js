@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const { discordRequest } = require('./lib');
+const images = require('./images');
 const config = require('./config');
 
 async function main() {
@@ -45,15 +46,19 @@ async function main() {
   const targetMsg = target.data;
   const all = [...previous, targetMsg].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   
-  const conversation = all.map((m) => ({
-    id: m.id,
-    authorId: m.author?.id,
-    authorLabel: label(m),
-    content: sanitizeContent(m.content),
-    isSelf: m.author?.id === botId,
-    isTarget: m.id === messageId,
-    createdAt: m.timestamp,
-  }));
+  const conversation = all.map((m) => {
+    const entry = {
+      id: m.id,
+      authorId: m.author?.id,
+      authorLabel: label(m),
+      content: images.annotateEmptyContent(sanitizeContent(m.content), m),
+      isSelf: m.author?.id === botId,
+      isTarget: m.id === messageId,
+      createdAt: m.timestamp,
+    };
+    images.withMedia(entry, m, true);
+    return entry;
+  });
   
   const referencedId = targetMsg?.message_reference?.message_id || null;
   const referenced = referencedId ? conversation.find((m) => m.id === referencedId) : null;

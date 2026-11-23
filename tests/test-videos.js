@@ -184,5 +184,58 @@ ok(!fs.existsSync(stale) && fs.existsSync(fresh), 'vid.sh deletes cache files ol
 
 try { fs.rmSync(tmpCache, { recursive: true, force: true }); } catch { /* ignore */ }
 
+// --- recent-style media: URLs must be visible for an earlier video in the channel ---
+const recentVideo = images.withMedia({
+  author: 'sowa',
+  author_id: '1',
+  message_id: '1574408763102732308',
+  content: '',
+}, {
+  attachments: [{
+    url: 'https://cdn.discordapp.com/attachments/1/1574408763102732308/Video-58441.mp4',
+    name: 'Video-58441.mp4',
+    contentType: 'video/mp4',
+    size: 4_000_000,
+    width: 1080,
+    height: 1920,
+  }],
+}, true);
+ok(recentVideo.videos && recentVideo.videos[0].url.includes('Video-58441.mp4'), 'withMedia on a recent item exposes the video URL');
+ok(recentVideo.attachments_summary && recentVideo.attachments_summary[0].filename === 'Video-58441.mp4', 'recent item also carries attachments_summary');
+ok(images.annotateEmptyContent('', {
+  attachments: [{ name: 'Video-58441.mp4', contentType: 'video/mp4', size: 4_000_000 }],
+}).includes('Video-58441.mp4'), 'empty content for that video is annotated with the filename');
+
+// --- vid.sh local: silent video (no audio stream) ---
+const vidScript = fs.existsSync(path.join(root, 'vid.sh'))
+  ? path.join(root, 'vid.sh')
+  : path.join(root, 'scripts', 'vid.sh');
+const haveFfmpeg = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' }).status === 0;
+if (haveFfmpeg) {
+  const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vid-local-'));
+  const silent = path.join(localDir, 'silent.mp4');
+  const made = spawnSync('ffmpeg', [
+    '-y', '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'color=c=red:s=160x120:d=1',
+    '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', silent,
+  ], { encoding: 'utf8' });
+  if (made.status === 0 && fs.existsSync(silent)) {
+    const localCache = fs.mkdtempSync(path.join(os.tmpdir(), 'vid-lcache-'));
+    const silentRun = spawnSync('bash', [vidScript, silent], {
+      encoding: 'utf8',
+      env: { ...process.env, VID_ALLOW_LOCAL: '1', VID_CACHE_DIR: localCache, VID_TOTAL_TIMEOUT: '28' },
+    });
+    ok(silentRun.status === 0 && /pas de piste audio/.test(silentRun.stdout), 'vid.sh on a video with no audio stream prints pas de piste audio');
+    ok(!/transcript=/.test(silentRun.stdout), 'silent video does not invent a transcript');
+    try { fs.rmSync(localCache, { recursive: true, force: true }); } catch { /* ignore */ }
+  } else {
+    ok(true, 'skip local silent vid.sh (ffmpeg could not create a test clip)');
+  }
+  try { fs.rmSync(localDir, { recursive: true, force: true }); } catch { /* ignore */ }
+} else {
+  ok(true, 'skip local vid.sh tests (ffmpeg not installed)');
+}
+
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

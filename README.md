@@ -10,7 +10,7 @@ Le bot **cûm slayer** (`cûm slayer`, `cum slayer`, `slayer`) vit sur le serveu
 
 - **Déclenché par presque tout** — mention, surnom, mot-clé, réponse à un de ses messages, message d’un autre bot, tâche planifiée (roast du jour), activité vocale.
 - **Piloté par des outils** — la routine IA n’exécute pas l’API Discord à la main : elle appelle `scripts/act.sh` (et les autres outils) avec un JSON.
-- **Voit les photos et les vidéos** — si on le mentionne, l’appelle par son nom, lui répond, lui écrit en DM, ou dans une fenêtre de suivi, le payload inclut jusqu’à 4 images et 2 vidéos ; la routine les télécharge avec `scripts/img.sh` / `scripts/vid.sh` (images clés extraites d’une vidéo, pas d’audio).
+- **Voit les photos et les vidéos** — si on le mentionne, l’appelle par son nom, lui répond, lui écrit en DM, ou dans une fenêtre de suivi, le payload inclut jusqu’à 4 images et 2 vidéos ; la routine les télécharge avec `scripts/img.sh` / `scripts/vid.sh` (images clés + transcription locale des ~60 premières secondes, sans API payante). Les URLs des pièces jointes figurent aussi dans `recent` et `context.sh` pour une vidéo plus tôt dans le salon.
 - **Agit librement** — peu de contraintes de style, parfois un peu trop franc. Les vraies limites sont dans le code, pas dans le prompt.
 - **Comportement naturel** — il s’intègre au salon, réagit comme un membre, pas comme un assistant.
 
@@ -95,6 +95,7 @@ Le déploiement 24 h/24 sur Fly.io est décrit dans [docs/deploiement-fly.md](do
 │   ├── slash.js              # /classement (local) et /fiche (routine)
 │   └── memory.js, skills.js, usermem.js, …
 ├── scripts/                  # Outils appelés par la routine (act.sh, img.sh, vid.sh, …)
+├── tools/                    # Transcription locale (transcribe.py, setup-whisper.sh) — pas sur Fly
 ├── deploy/fly/               # Fly.io (Dockerfile, fly.toml, deploy-fly.sh)
 ├── docs/                     # Explications détaillées
 ├── prompts/ROUTINE_PROMPT.fr.md

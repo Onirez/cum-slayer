@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Download a video (Discord CDN / Tenor / Giphy) and extract 3–4 JPEG stills.
+# Download a video (Discord CDN / Tenor / Giphy), extract 3–4 JPEG stills,
+# and transcribe the first ~60 s of speech (local Whisper, French/English auto).
 # Usage: vid.sh <url>
 # Allowed hosts: cdn.discordapp.com, media.discordapp.net, *.tenor.com, *.giphy.com
-# Max 25 MiB, 20 s timeout. Cache files older than 24 h are deleted.
-# Secrets/tokens in the URL are never printed. No audio transcription.
+# Max 25 MiB. The whole run is capped at ~28 s so the routine is never blocked
+# longer than ~30 s. Cache files older than 24 h are deleted.
+# Secrets/tokens in the URL are never printed. Transcription runs on the box only.
 set -euo pipefail
 
 _HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -16,8 +18,17 @@ else
 fi
 CACHE="${VID_CACHE_DIR:-$ROOT/data/vid-cache}"
 MAX_BYTES=$((25 * 1024 * 1024))
-TIMEOUT=20
+TIMEOUT="${VID_DOWNLOAD_TIMEOUT:-12}"
+TOTAL_TIMEOUT="${VID_TOTAL_TIMEOUT:-28}"
 MAX_AGE_MIN=1440
+AUDIO_MAX_S="${VID_AUDIO_MAX_S:-60}"
+START_S="$(date +%s)"
+
+remaining() {
+  local used=$(( $(date +%s) - START_S ))
+  local left=$(( TOTAL_TIMEOUT - used ))
+  if (( left < 0 )); then echo 0; else echo "$left"; fi
+}
 
 URL="${1:-}"
 if [[ $# -ne 1 || -z "$URL" ]]; then
@@ -33,8 +44,14 @@ fi
 mkdir -p "$CACHE"
 find "$CACHE" -type f -mmin +"$MAX_AGE_MIN" -delete 2>/dev/null || true
 
-# Validate the URL (https, allowlisted host, no userinfo). Do not print it.
-if ! python3 - "$URL" << 'PY'
+LOCAL=0
+if [[ -n "${VID_ALLOW_LOCAL:-}" && -f "$URL" ]]; then
+  LOCAL=1
+fi
+
+if [[ "$LOCAL" -eq 0 ]]; then
+  # Validate the URL (https, allowlisted host, no userinfo). Do not print it.
+  if ! python3 - "$URL" << 'PY'
 import sys
 from urllib.parse import urlparse
 url = sys.argv[1]
@@ -57,13 +74,28 @@ if u.port not in (None, 443):
     sys.exit(1)
 sys.exit(0)
 PY
-then
-  echo "error: only https URLs on cdn.discordapp.com, media.discordapp.net, tenor.com or giphy.com are allowed" >&2
-  exit 1
+  then
+    echo "error: only https URLs on cdn.discordapp.com, media.discordapp.net, tenor.com or giphy.com are allowed" >&2
+    exit 1
+  fi
 fi
 
-HASH="$(printf '%s' "$URL" | sha256sum | awk '{print $1}')"
-EXT="$(python3 - "$URL" << 'PY'
+if [[ "$LOCAL" -eq 1 ]]; then
+  HASH="$(sha256sum -- "$URL" | awk '{print $1}')"
+  EXT="$(python3 - "$URL" << 'PY'
+import sys, os
+name = os.path.basename(sys.argv[1]).lower()
+for ext in (".mp4", ".m4v", ".mov", ".webm", ".qt"):
+    if name.endswith(ext):
+        print(".mp4" if ext in (".m4v",) else (".mov" if ext == ".qt" else ext))
+        break
+else:
+    print(".mp4")
+PY
+)"
+else
+  HASH="$(printf '%s' "$URL" | sha256sum | awk '{print $1}')"
+  EXT="$(python3 - "$URL" << 'PY'
 import sys
 from urllib.parse import urlparse, unquote
 path = unquote(urlparse(sys.argv[1]).path or "")
@@ -76,9 +108,10 @@ else:
     print(".mp4")
 PY
 )"
+fi
 VID="$CACHE/${HASH}${EXT}"
 META="$CACHE/${HASH}.meta"
-FRAME_GLOB="$CACHE/${HASH}-"
+AUDIO_META="$CACHE/${HASH}.audio"
 
 print_result() {
   if [[ ! -f "$META" ]]; then
@@ -91,19 +124,130 @@ print_result() {
     printf '%s\n' "$f"
   done
   shopt -u nullglob
+  if [[ -f "$AUDIO_META" ]]; then
+    cat "$AUDIO_META"
+  fi
 }
 
+transcribe_cached_video() {
+  local left
+  left="$(remaining)"
+  if (( left < 3 )); then
+    printf '%s\n' "audio=unavailable" "transcription indisponible (délai dépassé)" > "$AUDIO_META"
+    chmod 600 "$AUDIO_META" 2>/dev/null || true
+    return 0
+  fi
+
+  local has_audio=""
+  has_audio="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$VID" 2>/dev/null || true)"
+  if [[ -z "$has_audio" ]]; then
+    printf '%s\n' "audio=none" "pas de piste audio" > "$AUDIO_META"
+    chmod 600 "$AUDIO_META"
+    return 0
+  fi
+
+  local wav="$CACHE/${HASH}.wav"
+  if ! ffmpeg -y -hide_banner -loglevel error -t "$AUDIO_MAX_S" -i "$VID" \
+      -vn -ac 1 -ar 16000 -f wav "$wav" </dev/null
+  then
+    printf '%s\n' "audio=none" "pas de piste audio" > "$AUDIO_META"
+    chmod 600 "$AUDIO_META"
+    rm -f "$wav"
+    return 0
+  fi
+  local wav_size
+  wav_size="$(wc -c < "$wav" | tr -d ' ')"
+  if [[ -z "$wav_size" || "$wav_size" -lt 1000 ]]; then
+    printf '%s\n' "audio=none" "pas de piste audio" > "$AUDIO_META"
+    chmod 600 "$AUDIO_META"
+    rm -f "$wav"
+    return 0
+  fi
+
+  left="$(remaining)"
+  if (( left < 3 )); then
+    printf '%s\n' "audio=unavailable" "transcription indisponible (délai dépassé)" > "$AUDIO_META"
+    chmod 600 "$AUDIO_META"
+    rm -f "$wav"
+    return 0
+  fi
+
+  local out=""
+  local status=0
+  set +e
+  AUD_SH="$_HERE/aud.sh"
+  if [[ ! -x "$AUD_SH" ]]; then AUD_SH="$ROOT/aud.sh"; fi
+  out="$(timeout --signal=TERM --kill-after=2s "${left}s" "$AUD_SH" "$wav" 2>/dev/null)"
+  status=$?
+  set -e
+  rm -f "$wav"
+
+  if [[ "$status" -eq 0 && -n "$out" ]]; then
+    if grep -q '^transcript=' <<<"$out"; then
+      printf 'audio=speech\n%s\n' "$out" > "$AUDIO_META"
+    elif grep -q 'aucune parole détectée' <<<"$out"; then
+      printf 'audio=no_speech\n%s\n' "$out" > "$AUDIO_META"
+    elif grep -q 'pas de piste audio' <<<"$out"; then
+      printf 'audio=none\n%s\n' "$out" > "$AUDIO_META"
+    else
+      printf 'audio=unavailable\n%s\n' "$out" > "$AUDIO_META"
+    fi
+  elif [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    printf '%s\n' "audio=unavailable" "transcription indisponible (délai dépassé)" > "$AUDIO_META"
+  else
+    printf '%s\n' "audio=unavailable" "transcription indisponible" > "$AUDIO_META"
+  fi
+  chmod 600 "$AUDIO_META"
+}
+
+ensure_audio() {
+  if [[ -f "$AUDIO_META" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$VID" ]]; then
+    return 0
+  fi
+  transcribe_cached_video
+}
+
+if [[ "$LOCAL" -eq 1 ]]; then
+  # Copy the local file into the cache under the content hash (no URL).
+  if [[ ! -f "$VID" ]]; then
+    SIZE="$(wc -c < "$URL" | tr -d ' ')"
+    if [[ -z "$SIZE" || "$SIZE" -eq 0 ]]; then
+      echo "error: empty download" >&2
+      exit 1
+    fi
+    if [[ "$SIZE" -gt "$MAX_BYTES" ]]; then
+      echo "error: file exceeds 25 MB" >&2
+      exit 1
+    fi
+    cp -f -- "$URL" "$VID"
+    chmod 600 "$VID"
+  fi
+fi
+
 if [[ -f "$VID" && -f "$META" ]] && compgen -G "$CACHE/${HASH}-*.jpg" >/dev/null; then
+  ensure_audio
   print_result
   exit 0
 fi
 
-TMP="$(mktemp "$CACHE/tmp.XXXXXX")"
-cleanup() { rm -f "$TMP"; }
-trap cleanup EXIT
+if [[ "$LOCAL" -eq 0 ]]; then
+  TMP="$(mktemp "$CACHE/tmp.XXXXXX")"
+  cleanup() { rm -f "$TMP"; }
+  trap cleanup EXIT
 
-# Download with redirect host checks. Never print the URL.
-if ! python3 - "$URL" "$TMP" "$MAX_BYTES" "$TIMEOUT" << 'PY'
+  DL_TIMEOUT="$TIMEOUT"
+  LEFT="$(remaining)"
+  if (( LEFT < DL_TIMEOUT )); then DL_TIMEOUT="$LEFT"; fi
+  if (( DL_TIMEOUT < 3 )); then
+    echo "error: download failed" >&2
+    exit 1
+  fi
+
+  # Download with redirect host checks. Never print the URL.
+  if ! python3 - "$URL" "$TMP" "$MAX_BYTES" "$DL_TIMEOUT" << 'PY'
 import sys, ssl
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHandler
@@ -156,23 +300,23 @@ except Exception:
     sys.exit(1)
 sys.exit(0)
 PY
-then
-  echo "error: download failed" >&2
-  exit 1
-fi
+  then
+    echo "error: download failed" >&2
+    exit 1
+  fi
 
-SIZE="$(wc -c < "$TMP" | tr -d ' ')"
-if [[ -z "$SIZE" || "$SIZE" -eq 0 ]]; then
-  echo "error: empty download" >&2
-  exit 1
-fi
-if [[ "$SIZE" -gt "$MAX_BYTES" ]]; then
-  echo "error: file exceeds 25 MB" >&2
-  exit 1
-fi
+  SIZE="$(wc -c < "$TMP" | tr -d ' ')"
+  if [[ -z "$SIZE" || "$SIZE" -eq 0 ]]; then
+    echo "error: empty download" >&2
+    exit 1
+  fi
+  if [[ "$SIZE" -gt "$MAX_BYTES" ]]; then
+    echo "error: file exceeds 25 MB" >&2
+    exit 1
+  fi
 
-# Reject non-video bodies (HTML error pages, etc.).
-if ! python3 - "$TMP" << 'PY'
+  # Reject non-video bodies (HTML error pages, etc.).
+  if ! python3 - "$TMP" << 'PY'
 import sys
 path = sys.argv[1]
 with open(path, "rb") as f:
@@ -185,14 +329,15 @@ if head.startswith(b"\x1a\x45\xdf\xa3"):
     sys.exit(0)
 sys.exit(1)
 PY
-then
-  echo "error: downloaded file is not a recognized video (mp4, mov, webm)" >&2
-  exit 1
-fi
+  then
+    echo "error: downloaded file is not a recognized video (mp4, mov, webm)" >&2
+    exit 1
+  fi
 
-chmod 600 "$TMP"
-mv -f "$TMP" "$VID"
-trap - EXIT
+  chmod 600 "$TMP"
+  mv -f "$TMP" "$VID"
+  trap - EXIT
+fi
 
 DURATION="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$VID" 2>/dev/null || true)"
 DURATION="$(python3 - "$DURATION" << 'PY'
@@ -261,4 +406,5 @@ FRAME_COUNT="$(ls -1 "$CACHE/${HASH}-"*.jpg 2>/dev/null | wc -l | tr -d ' ')"
 } > "$META"
 chmod 600 "$META"
 
+ensure_audio
 print_result

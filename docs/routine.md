@@ -12,7 +12,7 @@ Le fichier [`prompts/ROUTINE_PROMPT.fr.md`](../prompts/ROUTINE_PROMPT.fr.md) est
 - le roast du jour (une pique originale, sans annonce ni récapitulatif) ;
 - le suivi de conversation (`trigger: "follow"`) : ne répondre que si le message prolonge clairement l’échange, sinon silence total.
 
-Les textes exacts à ajouter au prompt d’une routine déjà en place sont dans [`drafts/`](../drafts/), notamment [`drafts/ROUTINE_ADDITION_follow.fr.md`](../drafts/ROUTINE_ADDITION_follow.fr.md) et [`drafts/ROUTINE_ADDITION_videos.fr.md`](../drafts/ROUTINE_ADDITION_videos.fr.md).
+Les textes exacts à ajouter au prompt d’une routine déjà en place sont dans [`drafts/`](../drafts/), notamment [`drafts/ROUTINE_ADDITION_follow.fr.md`](../drafts/ROUTINE_ADDITION_follow.fr.md) et [`drafts/ROUTINE_ADDITION_videos.fr.md`](../drafts/ROUTINE_ADDITION_videos.fr.md) et [`drafts/ROUTINE_ADDITION_audio.fr.md`](../drafts/ROUTINE_ADDITION_audio.fr.md).
 
 ## Contrat
 

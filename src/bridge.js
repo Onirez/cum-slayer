@@ -474,11 +474,16 @@ function markTriggered(userId) {
 }
 
 function toRecentItem(m) {
-  return {
+  // Include message_id and media URLs so the routine can analyse a
+  // video/image posted earlier in the channel, not only the current
+  // or replied-to message.
+  const item = {
     author: authorName(m),
     author_id: m.author?.id || null,
+    message_id: m.id || null,
     content: truncate(resolveContent(m), CONTENT_TRUNCATE),
   };
+  return images.withMedia(item, m, true);
 }
 
 async function recentMessages(message, limit = RECENT_LIMIT) {
@@ -1161,10 +1166,8 @@ async function fireFollow(message) {
     );
     const referenced = await getReferenced(message);
     const includeImages = images.shouldAttachImages({ authorIsBot, follow: true });
-    if (referenced && !includeImages) {
-      delete referenced.images;
-      delete referenced.videos;
-    }
+    // Referenced media (images/videos) stays available so a reply to an
+    // earlier video can be analysed even if the current message has no media.
     const payload = {
       guild_id: message.guildId || null,
       channel_id: message.channelId,
@@ -1366,10 +1369,8 @@ client.on('messageCreate', async (message) => {
     const includeImages = images.shouldAttachImages({
       authorIsBot, mentioned, named, replyToBot, isDm,
     });
-    if (referenced && !includeImages) {
-      delete referenced.images;
-      delete referenced.videos;
-    }
+    // Referenced media (images/videos) stays available so a reply to an
+    // earlier video can be analysed even if the current message has no media.
     const payload = {
       guild_id: message.guildId || null,
       channel_id: message.channelId,

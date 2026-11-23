@@ -45,3 +45,7 @@ data/vid-cache/
 # Slash /fiche interaction tokens (never commit)
 data/slash-ix.json
 data/slash-ix/
+
+# Local Whisper model + venv (box only, never commit)
+models/
+tools/whisper-venv/
