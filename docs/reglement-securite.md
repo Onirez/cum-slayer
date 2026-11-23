@@ -6,7 +6,7 @@ Le règlement a été publié dans le salon `📜┃règlement-agents` du serveu
 
 - **Dans la catégorie AGENTS** : le bot peut parler et, via un plan confirmé, agir sans restriction de salon.
 - **Hors AGENTS** : uniquement une `@` mention explicite, ou une réponse à l’un de ses messages (exception du créateur). Surnoms et mot-clé `cum`/`cûm` ignorés.
-- **DM** : seulement avec quelqu’un qui a déjà interagi (déclencheur, DM entrant, ou réponse du bot). Les DM entrants sont limités aux membres du serveur autorisé (`ALLOWED_GUILDS`).
+- **DM** : le bot répond à quiconque lui écrit en DM (cette prise de contact compte comme l’interaction initiale). Il refuse toujours d’ouvrir un DM vers quelqu’un qui ne l’a pas contacté en premier. Jamais de DM non sollicité.
 
 ## Plans Confirmer / Annuler
 

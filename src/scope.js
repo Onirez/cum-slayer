@@ -5,7 +5,8 @@
  *  - AGENTS category scope (channel, thread parent, or the category itself).
  *  - Explicit @ mention detection (content token, not a reply ping).
  *  - Trigger decision (pure function, unit-testable).
- *  - DM rule: users the bot has interacted with (data/interactions.json).
+ *  - DM rule: anyone who DMs the bot is recorded as having interacted;
+ *    unsolicited DMs (bot writes first) are still refused.
  *  - Unsolicited-message guard for the side scripts (send/embed/reply).
  * DISCORD_BOT_TOKEN is read from the environment only and never logged.
  */
@@ -223,13 +224,50 @@ function triggerRecord(messageId) {
  * Side-script guard: posting in a channel is allowed in AGENTS, in a DM, or
  * where the bot was solicited (a recorded trigger in the last 15 minutes).
  */
-async function assertMaySpeakIn(channelId) {
-  if (recentTriggerIn(channelId)) return 'recent-trigger';
-  const { inAgents, channel } = await restInAgents(channelId);
+
+/** Recipient of a DM / group-DM channel, if Discord included one. */
+function dmRecipientId(channel) {
+  if (!channel || typeof channel !== 'object') return null;
+  const rec = Array.isArray(channel.recipients) && channel.recipients[0];
+  if (rec && rec.id) return String(rec.id);
+  if (channel.recipient && channel.recipient.id) return String(channel.recipient.id);
+  if (channel.recipient_id) return String(channel.recipient_id);
+  return null;
+}
+
+function anyTriggerInChannel(channelId) {
+  const id = String(channelId || '');
+  if (!id) return false;
+  return (readJson(TRIGGERS_FILE, { triggers: [] }).triggers || [])
+    .some((t) => t && t.channel_id === id);
+}
+
+/**
+ * May we post in this DM? Yes if the user already DMed / triggered / was
+ * replied to, or if this channel has a recorded trigger (they wrote first).
+ * Never used to open a new unsolicited DM.
+ */
+function dmReplyAllowed(channel, channelId, deps = {}) {
+  const recent = deps.recentTriggerIn || recentTriggerIn;
+  const has = deps.hasInteracted || hasInteracted;
+  const any = deps.anyTriggerInChannel || anyTriggerInChannel;
+  const id = String(channelId || (channel && channel.id) || '');
+  if (id && recent(id)) return 'recent-trigger';
+  const uid = dmRecipientId(channel);
+  if (uid && has(uid)) return 'dm-interacted';
+  if (id && any(id)) return 'dm-channel-trigger';
+  return null;
+}
+
+async function assertMaySpeakIn(channelId, deps = {}) {
+  const recent = deps.recentTriggerIn || recentTriggerIn;
+  if (recent(channelId)) return 'recent-trigger';
+  const lookup = deps.restInAgents || restInAgents;
+  const { inAgents, channel } = await lookup(channelId);
   if (inAgents) return 'agents';
   if (channel && DM_TYPES.has(channel.type)) {
-    const rec = (channel.recipients || [])[0];
-    if (rec && hasInteracted(rec.id)) return 'dm-interacted';
+    const why = dmReplyAllowed(channel, channelId, deps);
+    if (why) return why;
     throw new Error('refused: no prior interaction with this DM user (Discord Agent Rules)');
   }
   throw new Error('refused: outside the AGENTS category the bot only speaks where it was @mentioned (Discord Agent Rules)');
@@ -241,4 +279,5 @@ module.exports = {
   isInAgents, hasExplicitMention, decideTrigger, BotLoopGuard,
   loadInteractions, hasInteracted, recordInteraction,
   restInAgents, recentTriggerIn, triggerRecord, assertMaySpeakIn,
+  dmRecipientId, dmReplyAllowed, anyTriggerInChannel,
 };

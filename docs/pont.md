@@ -19,7 +19,7 @@ Pour chaque message, `src/scope.js` `decideTrigger` produit l’un des identifia
 | `name` | Un des alias (`BOT_ALIASES`) dans AGENTS uniquement |
 | `keyword` | Mot-clé `cum` / `cûm` dans AGENTS uniquement |
 | `reply_to_bot` | Réponse à un message du bot (partout, exception du créateur) |
-| `dm` | Message privé d’un membre du serveur autorisé |
+| `dm` | Message privé de quiconque écrit au bot |
 | `daily_roast` | Tâche planifiée, pas un message (voir [roast-du-jour.md](roast-du-jour.md)) |
 | `follow` | Message humain, sans mention / alias / réponse, dans un salon où le bot vient de parler (fenêtre de 2 min). Jamais en DM, jamais pour un bot, jamais si l’auteur a opté out. |
 
@@ -89,4 +89,4 @@ Les comparaisons de jeton sont en temps constant. Les secrets ne sont jamais jou
 
 ## Garde à l’écriture
 
-Même si la routine demande un `reply` ou un `react`, `act.js` refuse de poster hors AGENTS, hors déclencheur enregistré, hors fenêtre de 15 minutes, ou en DM envers quelqu’un qui n’a jamais interagi. Un `message_id` nul (post autonome, typiquement le roast) n’est accepté que dans ces mêmes conditions.
+Même si la routine demande un `reply` ou un `react`, `act.js` refuse de poster hors AGENTS, hors déclencheur enregistré, hors fenêtre de 15 minutes, ou en DM envers quelqu’un qui n’a jamais écrit au bot. Un DM entrant est enregistré tout de suite comme cette interaction, donc la réponse dans le même salon DM passe. Un `message_id` nul (post autonome, typiquement le roast) n’est accepté que dans ces mêmes conditions.

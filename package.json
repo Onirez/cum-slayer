@@ -11,7 +11,7 @@
     "start": "node src/bridge.js",
     "start:supervised": "bash scripts/start.sh",
     "stop": "bash scripts/stop.sh",
-    "test": "node tests/test-offline.js && node tests/test-act-http.js && node tests/test-usermem.js && node tests/test-images.js && node tests/test-restart.js && node tests/test-slash.js && node tests/test-bot-loop.js && node tests/test-follow.js && node tests/test-videos.js && node tests/test-stats.js && node tests/test-full-count.js",
+    "test": "node tests/test-offline.js && node tests/test-act-http.js && node tests/test-usermem.js && node tests/test-images.js && node tests/test-restart.js && node tests/test-slash.js && node tests/test-bot-loop.js && node tests/test-follow.js && node tests/test-videos.js && node tests/test-stats.js && node tests/test-full-count.js && node tests/test-dm-policy.js",
     "test:live": "node tests/test-rules.js && node tests/test-roast.js",
     "check": "node --check src/bridge.js && node --check src/act.js && node --check src/act_http.js && node --check src/mod.js && node --check src/scope.js && node --check src/roast.js && node --check src/config.js && node --check src/usermem.js && node --check src/user.js && node --check src/backfill_users.js && node --check src/images.js && node --check src/restart.js && node --check src/slash.js && node --check src/follow.js && node --check src/lifetime.js && node --check src/stats_compute.js && node --check src/stats_render.js && node --check src/full_count.js",
     "roast": "bash scripts/roast_now.sh",

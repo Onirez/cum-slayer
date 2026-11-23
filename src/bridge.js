@@ -436,21 +436,6 @@ async function isReplyToBot(message, client) {
   }
 }
 
-async function userSharesAllowedGuild(userId) {
-  for (const guildId of allowedGuilds) {
-    const guild = client.guilds.cache.get(guildId);
-    if (!guild) continue;
-    if (guild.members.cache.has(userId)) return true;
-    try {
-      await guild.members.fetch(userId);
-      return true;
-    } catch {
-      // Not a member, or fetch failed.
-    }
-  }
-  return false;
-}
-
 function checkRateLimits(userId) {
   const now = Date.now();
   const last = userCooldowns.get(userId) || 0;
@@ -575,7 +560,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildPresences,
   ],
-  partials: [Partials.Channel],
+  partials: [Partials.Channel, Partials.Message],
 });
 
 let autoVoiceTimer = null;
@@ -1298,6 +1283,8 @@ client.on('messageCreate', async (message) => {
 
     if (isDm) {
       if (!ALLOW_DMS) return;
+      // Channel + Message partials are required: Discord does not send
+      // uncached DM channels in the READY payload.
       if (message.channel?.partial) {
         try {
           await message.channel.fetch();
@@ -1306,9 +1293,19 @@ client.on('messageCreate', async (message) => {
           return;
         }
       }
-      if (!(await userSharesAllowedGuild(message.author.id))) {
-        log(`skip dm user=${message.author.id} channel=${message.channelId} reason=not in allowed guild`);
-        return;
+      if (message.partial) {
+        try {
+          await message.fetch();
+        } catch (err) {
+          log(`warn: failed to fetch DM message ${message.id}: ${err.message}`);
+          return;
+        }
+      }
+      // Anyone who DMs the bot has initiated contact. Record that before
+      // the webhook so the reply in this same DM is allowed. Never open a
+      // DM that the user did not start.
+      try { scope.recordInteraction(message.author.id, 'dm'); } catch (err) {
+        log(`warn: failed to record DM interaction: ${err.message}`);
       }
     } else if (!allowedGuilds.has(message.guildId)) {
       return;

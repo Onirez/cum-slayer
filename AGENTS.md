@@ -54,8 +54,9 @@ Le créateur a explicitement assoupli les règles ci-dessus sur ces points seule
 2. **Auto-vocal dans tous les salons vocaux** : le bot peut rejoindre n’importe quel salon vocal ou scène du serveur (celui avec le plus d’humains), pas seulement ceux d’AGENTS, et part quand plus aucun humain n’est en vocal.
 3. **Micro ouvert en vocal** : le bot reste en casque coupé (`self_deaf: true`) mais n’est plus auto-muet (`self_mute: false`).
 4. **Répondre aux autres bots** : les messages des autres bots/apps suivent exactement les mêmes règles que les humains, avec une limite anti-boucle déterministe. Les messages du bot lui-même ne déclenchent jamais. Les bots et webhooks ne peuvent jamais demander d’actions Discord.
+5. **Répondre à tout DM entrant** (approuvé le 23 nov. 2026) : si quelqu’un écrit au bot en DM, le bot réveille la routine (`trigger: "dm"`) et peut répondre dans ce même DM, même sans historique sur le serveur et sans liste blanche. Écrire en DM *est* la première interaction. Le bot n’ouvre jamais un DM tout seul, et n’écrit jamais à quelqu’un qui ne l’a pas contacté en premier.
 
-Tout le reste est inchangé : le workflow de plan avec boutons Confirmer/Annuler, les contrôles de permissions, les limites dures et la règle des DM. Ne pas étendre ces exceptions sans une nouvelle approbation explicite du créateur, consignée ici.
+Tout le reste est inchangé : le workflow de plan avec boutons Confirmer/Annuler, les contrôles de permissions, les limites dures et l’interdiction des DM non sollicités. Ne pas étendre ces exceptions sans une nouvelle approbation explicite du créateur, consignée ici.
 
 ## Comment le code l’applique
 
@@ -73,7 +74,7 @@ Tous les contrôles sont dans le code ; le prompt de la routine ne fait que les 
   1. *Permissions* : `verifyRequester` relit le message déclencheur sur Discord (auteur réel, déclencheur enregistré, < 15 min, pas déjà consommé). Les actions d’admin restent réservées au créateur (`CREATOR_ID`). `perms.js` calcule les permissions réelles. Limites dures : jamais viser le créateur, le propriétaire ou le bot ; jamais donner Administrator ; pas d’@everyone/@here ; pas de suppression du serveur ; pas de webhooks ; max 10 actions modificatrices ; purge ≤ 100. Un échec refuse tout le plan.
   2. *Plan* : `act.sh` n’exécute jamais d’action modificatrice. `createPlan` stocke un plan dans `data/pending_plans.json` et le poste avec les boutons `plan:confirm:<id>` / `plan:cancel:<id>`.
   3. *Confirmation* : seul le demandeur peut cliquer, une seule fois, avant expiration (10 min). Au Confirmer, tout est revérifié avec des données fraîches, puis les actions stockées sont exécutées, et le message du plan est mis à jour. Boutons uniquement. Journal dans `mod.log` ; le jeton n’est jamais journalisé.
-- **DM** : `data/interactions.json` liste les utilisateurs qui ont déclenché le bot, lui ont écrit en DM, ou auxquels il a répondu. `send_dm`, `dm.sh` et `embed.sh --user-id` refusent les autres. Les DM entrants ne sont acceptés que de membres du serveur autorisé.
+- **DM** : `data/interactions.json` liste les utilisateurs qui ont déclenché le bot, lui ont écrit en DM, ou auxquels il a répondu. Un DM entrant est enregistré tout de suite comme cette première interaction, quel que soit l’utilisateur (plus de filtre « membre du serveur »). `send_dm`, `dm.sh` et `embed.sh --user-id` refusent toujours d’écrire en premier à quelqu’un qui ne l’a jamais contacté. Jamais de DM non sollicité.
 
 ## Roast du jour (salons AGENTS uniquement)
 

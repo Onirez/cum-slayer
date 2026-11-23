@@ -20,11 +20,11 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | `BOT_APP_ID` | id du bot cûm slayer | Identifiant applicatif Discord |
 | `CREATOR_ID` | id d’Onirez | Seul utilisateur autorisé aux actions d’admin |
 | `GUILD_ID` | Le Royaume | Serveur des outils de modération et du roast |
-| `ALLOWED_GUILDS` | même id | Serveurs dont les messages (et DM de membres) sont acceptés |
+| `ALLOWED_GUILDS` | même id | Serveurs dont les messages de salon sont acceptés |
 | `AGENTS_CATEGORY_ID` | catégorie AGENTS | Périmètre libre |
 | `FALLBACK_CHANNEL_ID` | salon agent-1 | Repli pour le roast du jour |
 | `BOT_ALIASES` | `cûm slayer,cum slayer,slayer` | Surnoms, AGENTS uniquement |
-| `ALLOW_DMS` | `1` | Accepter les DM des membres |
+| `ALLOW_DMS` | `1` | Accepter les DM de quiconque écrit au bot (pas seulement les membres) |
 | `AUTO_VOICE` | `on` | Rejoindre le vocal le plus rempli |
 | `DAILY_ROAST` | `on` | Activer le roast du jour |
 
