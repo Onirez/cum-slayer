@@ -87,7 +87,7 @@ const userCooldowns = new Map(); // userId -> last trigger ts
 let lastRestartAt = 0;
 const botLoopGuard = new scope.BotLoopGuard({
   maxPerWindow: config.BOT_LOOP_MAX,
-  windowMs: config.BOT_LOOP_WINDOW_MS,
+  idleMs: config.BOT_LOOP_IDLE_MS,
   authorCooldownMs: config.BOT_AUTHOR_COOLDOWN_MS,
 });
 const globalHits = []; // timestamps of recent triggers
@@ -1151,7 +1151,8 @@ client.on('messageCreate', async (message) => {
     if (message.system) return;
     const authorIsBot = Boolean(message.author?.bot);
     // Creator exception (AGENTS.md): other bots trigger with the same rules as
-    // humans, capped by the anti-loop guard. A human message resets the cap.
+    // humans, capped by the anti-loop guard (consecutive bot replies).
+    // A human message in the channel resets the streak.
     if (!authorIsBot) botLoopGuard.noteHuman(message.channelId);
 
     const isDm = !message.guildId;
@@ -1177,6 +1178,13 @@ client.on('messageCreate', async (message) => {
     // Per-user memory: log every guild message (never DMs). Fire-and-forget.
     if (!isDm && USERMEM_ENABLED) {
       userMem.recordMessage(message, { selfId: client.user?.id }).catch((err) => log(`warn: usermem append failed: ${err.message}`));
+    }
+
+    // Once the consecutive bot-reply cap is hit, ignore bot authors silently
+    // (no webhook, no reaction) until a human posts or the idle timer elapses.
+    if (authorIsBot && botLoopGuard.isCapped(message.channelId)) {
+      log(`skip bot-loop trigger=capped bot=${message.author.id} username=${message.author.username} channel=${message.channelId} message=${message.id} reason=max ${botLoopGuard.max} consecutive bot replies`);
+      return;
     }
 
     // Discord Agent Rules (AGENTS.md), deterministic:

@@ -110,30 +110,53 @@ function decideTrigger(f) {
 // ---------- anti-loop guard for bot authors ----------
 /**
  * Deterministic cap on bot-to-bot conversations, per channel:
- *  - at most `maxPerWindow` bot-triggered replies within `windowMs`, counted
- *    since the last human message in that channel (a human message resets it);
+ *  - at most `max` consecutive replies by this bot to bot authors;
+ *  - a human (non-bot) message in the channel resets the streak to 0;
+ *  - the streak also resets after `idleMs` with no bot-triggered reply
+ *    (ignored bot messages while capped do not extend the timer);
  *  - at least `authorCooldownMs` between two triggers from the same bot.
+ * Humans are never checked against this guard.
  */
 class BotLoopGuard {
-  constructor({ maxPerWindow = 5, windowMs = 10 * 60 * 1000, authorCooldownMs = 5_000 } = {}) {
-    this.max = maxPerWindow; this.windowMs = windowMs; this.cooldown = authorCooldownMs;
-    this.channels = new Map(); // channelId -> [timestamps of bot-triggered replies]
+  constructor({ maxPerWindow = 5, idleMs, windowMs, authorCooldownMs = 5_000 } = {}) {
+    this.max = Math.max(1, Number(maxPerWindow) || 5);
+    this.idleMs = Math.max(0, Number(idleMs ?? windowMs ?? 30 * 60 * 1000) || 30 * 60 * 1000);
+    this.cooldown = Math.max(0, Number(authorCooldownMs) || 0);
+    this.channels = new Map(); // channelId -> { count, lastReplyAt }
     this.lastByAuthor = new Map(); // botAuthorId -> ts
   }
+  _state(channelId, now = Date.now()) {
+    const id = String(channelId);
+    const st = this.channels.get(id);
+    if (!st) return { id, count: 0, lastReplyAt: 0 };
+    if (this.idleMs && st.lastReplyAt && now - st.lastReplyAt >= this.idleMs) {
+      this.channels.delete(id);
+      return { id, count: 0, lastReplyAt: 0 };
+    }
+    return { id, count: st.count, lastReplyAt: st.lastReplyAt };
+  }
   noteHuman(channelId) { this.channels.delete(String(channelId)); }
+  isCapped(channelId, now = Date.now()) {
+    return this._state(channelId, now).count >= this.max;
+  }
   check(channelId, authorId, now = Date.now()) {
     const last = this.lastByAuthor.get(String(authorId)) || 0;
-    if (now - last < this.cooldown) return { ok: false, reason: `bot author cooldown (${this.cooldown}ms)` };
-    const list = (this.channels.get(String(channelId)) || []).filter((t) => now - t < this.windowMs);
-    if (list.length >= this.max) return { ok: false, reason: `max ${this.max} bot-triggered replies per ${Math.round(this.windowMs / 60000)} min in this channel until a human posts` };
+    if (this.cooldown && now - last < this.cooldown) {
+      return { ok: false, reason: `bot author cooldown (${this.cooldown}ms)` };
+    }
+    const st = this._state(channelId, now);
+    if (st.count >= this.max) {
+      const mins = Math.round(this.idleMs / 60000);
+      return { ok: false, reason: `max ${this.max} consecutive bot replies in this channel until a human posts or ${mins} min idle` };
+    }
     return { ok: true };
   }
   record(channelId, authorId, now = Date.now()) {
-    const id = String(channelId);
-    const list = (this.channels.get(id) || []).filter((t) => now - t < this.windowMs);
-    list.push(now);
-    this.channels.set(id, list);
+    const st = this._state(channelId, now);
+    const next = { count: st.count + 1, lastReplyAt: now };
+    this.channels.set(st.id, next);
     this.lastByAuthor.set(String(authorId), now);
+    return next;
   }
 }
 

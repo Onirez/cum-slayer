@@ -34,7 +34,7 @@ Si le paragraphe `/restart` n'est pas juste au-dessus, voir plus bas.
 ## Commande `/restart`
 
 Commande slash enregistrée sur le serveur (pas en global), visible par défaut seulement des administrateurs. Seul le créateur (`CREATOR_ID`) peut l’utiliser : le pont vérifie `interaction.user.id`, jamais un nom. Toute autre personne reçoit un refus éphémère. Le créateur reçoit « Redémarrage… » (éphémère), le client est détruit, le processus sort en code 1, et Fly relance la machine (`[[restart]] policy = "on-failure"`). Délai de 30 s entre deux redémarrages dans le même processus.
- Les autres bots suivent les mêmes règles, avec `BotLoopGuard` (5 réponses / 10 min / salon, reset si un humain écrit, 5 s entre deux messages du même bot).
+ Les autres bots suivent les mêmes règles, avec `BotLoopGuard` (5 réponses consécutives à des bots par salon, y compris les mentions ; ensuite silence, sans webhook ni réaction, jusqu’à un message humain ou 30 min d’inactivité ; 5 s entre deux messages du même bot). Les humains ne sont pas concernés. `BOT_LOOP_MAX` et `BOT_LOOP_IDLE_MS` sont configurables.
 
 ## Payload envoyé à la routine
 

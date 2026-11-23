@@ -47,15 +47,19 @@ const ok = (c, msg) => { if (c) { pass++; console.log(`PASS ${msg}`); } else { f
   // Bots use the same rules as humans (creator exception); loops capped.
   ok(d({ inAgents: true, replyToBot: true }).trigger === 'reply_to_bot', 'bot reply to cûm slayer in agent-3 triggers (same rules)');
   ok(d({ inAgents: false, keyword: true }).trigger === null, 'bot keyword outside AGENTS ignored (same rules)');
-  const guard = new scope.BotLoopGuard({ maxPerWindow: 5, windowMs: 600000, authorCooldownMs: 5000 });
+  const guard = new scope.BotLoopGuard({ maxPerWindow: 5, idleMs: 30 * 60 * 1000, authorCooldownMs: 5000 });
   let t = 1_000_000; let allowed = 0; let lastReason = '';
   for (let i = 0; i < 10; i++) { const c = guard.check('C', 'B', t); if (c.ok) { guard.record('C', 'B', t); allowed++; } else lastReason = c.reason; t += 6000; }
-  ok(allowed === 5, `bot loop capped at 5 replies per channel (${allowed} allowed; ${lastReason})`);
+  ok(allowed === 5, `bot loop capped at 5 consecutive replies per channel (${allowed} allowed; ${lastReason})`);
   const g2 = new scope.BotLoopGuard(); g2.record('C2', 'B', 5000);
   ok(!g2.check('C3', 'B', 8000).ok && g2.check('C3', 'B', 10001).ok, 'same bot within 5 s cooldown refused, allowed after');
   guard.noteHuman('C');
   ok(guard.check('C', 'B', t).ok, 'a human message resets the channel cap');
-  ok(guard.check('C', 'B', t + 600001).ok, 'cap expires after the window');
+  const gIdle = new scope.BotLoopGuard({ maxPerWindow: 5, idleMs: 30 * 60 * 1000, authorCooldownMs: 0 });
+  const tIdle = 1_000_000;
+  for (let i = 0; i < 5; i++) gIdle.record('C4', 'B', tIdle + i * 1000);
+  ok(!gIdle.check('C4', 'B', tIdle + 4 * 1000 + 30 * 60 * 1000 - 1).ok, 'still capped before 30 min idle');
+  ok(gIdle.check('C4', 'B', tIdle + 4 * 1000 + 30 * 60 * 1000).ok, 'cap expires after 30 min idle');
   ok(d({ inAgents: true, keyword: true }).trigger === 'keyword', 'keyword inside AGENTS triggers');
   ok(d({ inAgents: true, replyToBot: true }).trigger === 'reply_to_bot', 'reply inside AGENTS triggers');
   ok(d({ isDm: true }).trigger === 'dm', 'DM triggers');

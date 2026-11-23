@@ -30,7 +30,7 @@ Toute action qui crée, modifie ou supprime quelque chose suit ce chemin, y comp
 
 ## Anti-boucle et quotas
 
-- Autres bots : 5 réponses déclenchées par des bots par salon et par 10 minutes, compteur remis à zéro dès qu’un humain écrit ; 5 s minimum entre deux déclencheurs du même bot.
+- Autres bots : 5 réponses consécutives à des bots par salon (mentions comprises), puis ignore silencieux (pas d’appel à la routine, pas de réaction) jusqu’à ce qu’un humain écrive dans le salon ou 30 minutes d’inactivité ; 5 s minimum entre deux déclencheurs du même bot. Les humains ne sont pas concernés.
 - Tous auteurs : 10 s de cooldown par utilisateur, 20 déclencheurs globaux par 10 minutes (réglable, voir [configuration.md](configuration.md)).
 
 ## Secrets
