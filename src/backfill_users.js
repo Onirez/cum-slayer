@@ -2,7 +2,8 @@
 'use strict';
 /**
  * Seed the per-user logs from recent guild channel history (read-only on Discord).
- *   node backfill_users.js [--per-channel 300] [--dry-run]
+ *   node backfill_users.js [--per-channel 300] [--dry-run] [--self-only]
+ * --self-only: light count-only entries for this bot (no content), for /classement.
  * Needs DISCORD_BOT_TOKEN in the environment (never printed). Skips channels the
  * bot cannot read. Merges with existing logs (dedupe by message id).
  */
@@ -16,6 +17,7 @@ const API = 'https://discord.com/api/v10';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
+const selfOnly = args.includes('--self-only');
 const iPer = args.indexOf('--per-channel');
 const PER_CHANNEL = Math.min(1000, Math.max(50, Number(iPer >= 0 ? args[iPer + 1] : 300) || 300));
 
@@ -63,7 +65,26 @@ async function main() {
       if (!r.ok) { status = `skip(${r.status})`; break; }
       if (!r.data.length) break;
       for (const m of r.data) {
-        if (!m.author || m.author.id === BOT_ID) continue;
+        if (!m.author) continue;
+        if (selfOnly) {
+          if (m.author.id !== BOT_ID) continue;
+          // default, reply, and slash-command responses (visible channel messages)
+          if (m.type !== 0 && m.type !== 19 && m.type !== 20) continue;
+          const entry = um.makeEntry({
+            messageId: m.id,
+            channelId: c.id,
+            channelName: c.name,
+            timestamp: Date.parse(m.timestamp),
+            name: m.member?.nick || m.author.global_name || m.author.username,
+            bot: true,
+            light: true,
+          });
+          if (!perUser.has(m.author.id)) perUser.set(m.author.id, []);
+          perUser.get(m.author.id).push(entry);
+          total++;
+          continue;
+        }
+        if (m.author.id === BOT_ID) continue;
         if (m.type !== 0 && m.type !== 19) continue; // default + reply only
         const entry = um.makeEntry({
           messageId: m.id,
@@ -95,7 +116,7 @@ async function main() {
       written++;
     }
   }
-  console.log(JSON.stringify({ guild: GUILD_ID, dryRun, perChannel: PER_CHANNEL, channels: report, messages: total, users: perUser.size, usersWritten: written }, null, 1));
+  console.log(JSON.stringify({ guild: GUILD_ID, dryRun, selfOnly, perChannel: PER_CHANNEL, channels: report, messages: total, users: perUser.size, usersWritten: written }, null, 1));
 }
 
 main().catch((err) => { console.error(`error: ${err.message}`); process.exit(1); });

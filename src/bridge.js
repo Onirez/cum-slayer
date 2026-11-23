@@ -1138,6 +1138,11 @@ client.on('messageCreate', async (message) => {
       if (ru && !ru.bot && message.guildId && channelInAgents(message.guild, message.channelId)) {
         try { roast.recordContact(ru.id, message.channelId); } catch (err) { log(`warn: recordContact failed: ${err.message}`); }
       }
+      // Light count of our own guild messages for /classement. Never trigger
+      // on ourselves (return below): no webhook, no throwback, no self-reply.
+      if (message.guildId && USERMEM_ENABLED && allowedGuilds.has(message.guildId) && !message.system) {
+        userMem.recordMessage(message, { selfId: client.user.id }).catch((err) => log(`warn: usermem self append failed: ${err.message}`));
+      }
       return;
     }
     // Never react to our own output: own user id (above), or anything sent

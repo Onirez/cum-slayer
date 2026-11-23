@@ -20,7 +20,8 @@ const path = require('path');
 let DATA_DIR;
 try { DATA_DIR = require('./config').DATA_DIR; } catch { DATA_DIR = path.join(__dirname, 'data'); }
 
-const KEEP = Math.max(20, Number(process.env.USERMEM_KEEP || 300));
+const KEEP = Math.max(20, Number(process.env.USERMEM_KEEP || 400));
+const SELF_BOT_ID = process.env.BOT_APP_ID || '1574150367325855856';
 const COMPACT_AT = Math.round(KEEP * 1.25);
 const MAX_FILE_BYTES = Number(process.env.USERMEM_MAX_FILE_BYTES || 384 * 1024);
 const CONTENT_MAX = 500;
@@ -98,7 +99,7 @@ function writeLog(id, entries) {
 }
 
 /** Build a compact log entry from plain fields (shared by live + backfill). */
-function makeEntry({ messageId, channelId, channelName, timestamp, content, attachments = 0, replyTo = null, replyToUser = null, name = null, bot = false }) {
+function makeEntry({ messageId, channelId, channelName, timestamp, content, attachments = 0, replyTo = null, replyToUser = null, name = null, bot = false, light = false }) {
   const e = {
     m: String(messageId),
     t: Number(timestamp) || Date.now(),
@@ -106,12 +107,13 @@ function makeEntry({ messageId, channelId, channelName, timestamp, content, atta
   };
   if (channelName) e.cn = truncate(channelName, 40);
   if (name) e.n = truncate(name, 40);
+  if (bot) e.b = 1;
+  if (light) return e; // count-only: no content, replies, or attachments
   let c = scrub(content);
   if (attachments) c = `${c}${c ? ' ' : ''}[${attachments} pièce(s) jointe(s)]`;
   e.c = truncate(c, CONTENT_MAX);
   if (replyTo) e.r = String(replyTo);
   if (replyToUser) e.ru = String(replyToUser);
-  if (bot) e.b = 1;
   return e;
 }
 
@@ -170,10 +172,23 @@ function append(userId, entry) {
   });
 }
 
-/** Record a discord.js Message (guild only, never DMs, never our own bot). */
+/** Record a discord.js Message (guild only, never DMs). Own-bot messages
+ *  are stored as light count-only entries for /classement (no content). */
 function recordMessage(message, { selfId } = {}) {
   if (!message || !message.guildId || !message.author) return Promise.resolve(false);
-  if (selfId && message.author.id === selfId) return Promise.resolve(false);
+  const isSelf = Boolean(selfId && String(message.author.id) === String(selfId));
+  if (isSelf) {
+    const entry = makeEntry({
+      messageId: message.id,
+      channelId: message.channelId,
+      channelName: message.channel?.name || null,
+      timestamp: message.createdTimestamp,
+      name: message.member?.displayName || message.author.globalName || message.author.username,
+      bot: true,
+      light: true,
+    });
+    return append(message.author.id, entry);
+  }
   const content = typeof message.cleanContent === 'string' ? message.cleanContent : (message.content || '');
   const hasEmbedsOnly = !content && message.embeds?.length;
   const entry = makeEntry({
@@ -236,6 +251,7 @@ function sensitiveReason(text) {
 
 function addNote(userId, byId, text, { dryRun = false } = {}) {
   const id = assertId(userId);
+  if (id === String(SELF_BOT_ID)) return { userId: id, saved: false, reason: 'refused: no AI notes on the bot itself' };
   const by = byId ? assertId(byId) : null;
   const clean = scrub(text);
   if (!clean) throw new Error('note is empty');
@@ -348,10 +364,9 @@ const PERIOD_MS = {
 };
 
 /**
- * Top-N most active members from usermem logs, including other bots.
- * Skips opted-out users and this bot (`selfId`). Rows for authors flagged
- * `b` get `bot: true` so the slash embed can mark them. Optional period
- * ('7j' | '30j' | 'tout') and channel id. Pure disk read, no network.
+ * Top-N most active members from usermem logs, including other bots and
+ * this bot (`selfId`, always marked `bot: true`). Skips opted-out users.
+ * Optional period ('7j' | '30j' | 'tout') and channel id. Pure disk read.
  */
 function leaderboard({ period = '7j', channelId = null, limit = 10, now = Date.now(), selfId = null } = {}) {
   const key = Object.prototype.hasOwnProperty.call(PERIOD_MS, period) ? period : '7j';
@@ -367,10 +382,10 @@ function leaderboard({ period = '7j', channelId = null, limit = 10, now = Date.n
   }
   const rows = [];
   for (const id of ids) {
-    if (selfId && id === String(selfId)) continue;
     if (isOptedOut(id)) continue;
     const all = readLog(id);
-    const isBot = all.some((e) => e && e.b);
+    const isSelf = Boolean(selfId && id === String(selfId));
+    const isBot = isSelf || all.some((e) => e && e.b);
     const entries = all.filter((e) => {
       if (since != null && !(Number(e.t) >= since)) return false;
       if (ch && e.ch !== ch) return false;

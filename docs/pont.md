@@ -26,7 +26,7 @@ Les messages du bot lui-même ne déclenchent jamais.
 
 ## Commandes `/classement` et `/fiche`
 
-- `/classement` `[periode]` `[salon]` : classement local des 10 plus actifs (humains et autres bots), calculé sur les logs usermem (7 jours par défaut, 30 jours, ou tout). Sans IA, embed public, sans ping. Les autres bots sont indiqués par 🤖. cûm slayer lui-même et les comptes opt-out sont exclus. Délai 30 s par utilisateur.
+- `/classement` `[periode]` `[salon]` : classement local des 10 plus actifs (humains et bots, y compris cûm slayer), calculé sur les logs usermem (7 jours par défaut, 30 jours, ou tout). Sans IA, embed public, sans ping. Les bots, y compris cûm slayer, sont indiqués par 🤖. Les comptes opt-out sont exclus. Les messages du bot lui-même sont comptés de façon légère (sans contenu ni notes IA) et n'alimentent pas les réponses, `/fiche` ou le roast du jour. Délai 30 s par utilisateur.
 - `/fiche membre:@user` : portrait rôti via la routine (`trigger: "slash_fiche"`). Le pont diffère l'interaction, envoie notes / stats / messages récents de la **cible**, et la routine répond avec `act.sh` + `interaction_id` (le jeton d'interaction reste sur le pont, il n'est jamais dans le payload). Si la cible a opté out ou n'a aucune donnée, réponse locale sans IA. Délai 60 s par utilisateur, plafond 20 fiches IA par heure.
 
 Si le paragraphe `/restart` n'est pas juste au-dessus, voir plus bas.
