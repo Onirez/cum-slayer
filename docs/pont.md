@@ -27,13 +27,13 @@ Les messages du bot lui-même ne déclenchent jamais.
 
 ### Suivi de conversation (`follow`)
 
-Après chaque réponse de cûm slayer dans un salon (hors réponses aux commandes slash `/classement`, `/fiche`, `/restart`), le pont ouvre une fenêtre de 2 minutes (`FOLLOW_WINDOW_MS`, défaut 120000). Pendant cette fenêtre, un message d’humain sans mention, alias ni réponse au bot est quand même envoyé à la routine avec `trigger: "follow"`, et le contexte `recent` habituel. Les messages d’autres bots ne déclenchent jamais le suivi ; `BotLoopGuard` reste inchangé.
+Après chaque réponse de cûm slayer dans un salon (hors réponses aux commandes slash `/stats`, `/fiche`, `/restart`), le pont ouvre une fenêtre de 2 minutes (`FOLLOW_WINDOW_MS`, défaut 120000). Pendant cette fenêtre, un message d’humain sans mention, alias ni réponse au bot est quand même envoyé à la routine avec `trigger: "follow"`, et le contexte `recent` habituel. Les messages d’autres bots ne déclenchent jamais le suivi ; `BotLoopGuard` reste inchangé.
 
 Garde-fous : au plus 3 suivis par fenêtre et par salon (`FOLLOW_MAX_PER_WINDOW`) ; debounce de 4,5 s (`FOLLOW_DEBOUNCE_MS`) pour regrouper les messages rapides d’une même personne en un seul réveil (le plus récent sert de cible) ; plafond global de 30 suivis par heure (`FOLLOW_HOURLY_MAX`). Une réponse du bot à un follow relance la fenêtre, mais le compteur de 3 ne se remet à zéro que sur une vraie interpellation humaine (mention, alias, mot-clé, ou réponse au bot). Le suivi n’utilise pas le délai de 10 s par auteur ni le quota global 20/10 min. Pas d’indicateur « en train d’écrire », pas de throwback. Les photos du message humain sont jointes si présentes (jamais celles d’un bot). État en mémoire : un redémarrage ou un déploiement efface les fenêtres. `FOLLOW=off` coupe le suivi.
 
-## Commandes `/classement` et `/fiche`
+## Commandes `/stats` et `/fiche`
 
-- `/classement` `[periode]` `[salon]` : classement local des 10 plus actifs (humains et bots, y compris cûm slayer), calculé sur les logs usermem (7 jours par défaut, 30 jours, ou tout). Sans IA, embed public, sans ping. Les bots, y compris cûm slayer, sont indiqués par 🤖. Les comptes opt-out sont exclus. Les messages du bot lui-même sont comptés de façon légère (sans contenu ni notes IA) et n'alimentent pas les réponses, `/fiche` ou le roast du jour. Délai 30 s par utilisateur.
+- `/stats` : infographie PNG calculée **en direct** à chaque appel à partir des logs usermem (totaux = stock plafonné à 400 messages/membre). Sans IA, réponse publique (le pont diffère puis joint l’image). Cooldown 30 s par utilisateur ; un seul rendu à la fois (machine 256 Mo). Compteurs all-time (déclencheurs par type, images vs vidéos, usages de `/stats`) dans `data/lifetime.json`. L’ancienne commande `/classement` a été retirée (les données usermem restent).
 - `/fiche membre:@user` : portrait rôti via la routine (`trigger: "slash_fiche"`). Le pont diffère l'interaction, envoie notes / stats / messages récents de la **cible**, et la routine répond avec `act.sh` + `interaction_id` (le jeton d'interaction reste sur le pont, il n'est jamais dans le payload). Si la cible a opté out ou n'a aucune donnée, réponse locale sans IA. Délai 60 s par utilisateur, plafond 20 fiches IA par heure.
 
 Si le paragraphe `/restart` n'est pas juste au-dessus, voir plus bas.

@@ -12,6 +12,7 @@ RUN npm ci --omit=dev
 
 COPY src ./src
 COPY scripts ./scripts
+COPY fonts ./fonts
 COPY AGENTS.md ./
 COPY deploy/fly/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh /app/scripts/*.sh \

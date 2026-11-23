@@ -32,3 +32,5 @@ data/slash-ix.json
 data/slash-ix/
 models
 tools/whisper-venv
+data/lifetime.json
+stats.png

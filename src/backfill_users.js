@@ -3,7 +3,7 @@
 /**
  * Seed the per-user logs from recent guild channel history (read-only on Discord).
  *   node backfill_users.js [--per-channel 300] [--dry-run] [--self-only]
- * --self-only: light count-only entries for this bot (no content), for /classement.
+ * --self-only: light count-only entries for this bot (no content), for /stats.
  * Needs DISCORD_BOT_TOKEN in the environment (never printed). Skips channels the
  * bot cannot read. Merges with existing logs (dedupe by message id).
  */

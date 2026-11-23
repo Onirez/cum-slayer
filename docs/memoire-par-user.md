@@ -15,7 +15,7 @@ Tout est sur le volume (`data/users/`), **jamais dans git** (`.gitignore`).
 | `data/users/_optout.json` | Les IDs qui ont demandé à ne plus être enregistrés | — |
 | `data/users/_throwback.json` | Dernier « vieux message » remonté par personne (anti-répétition) | purgé au fil de l'eau |
 
-- Seuls les messages du serveur autorisé sont enregistrés. **Les DM ne sont jamais enregistrés.** Les messages du bot lui-même sont comptés de façon légère pour `/classement` (horodatage, salon, nom, flag bot, **sans contenu**). Ils n'alimentent pas les notes IA, `/fiche`, le roast du jour, ni les réponses (le bot ne se répond pas à lui-même).
+- Seuls les messages du serveur autorisé sont enregistrés. **Les DM ne sont jamais enregistrés.** Les messages du bot lui-même sont comptés de façon légère pour `/stats` (horodatage, salon, nom, flag bot, **sans contenu**). Ils n'alimentent pas les notes IA, `/fiche`, le roast du jour, ni les réponses (le bot ne se répond pas à lui-même).
 - Les chaînes qui ressemblent à un token Discord sont masquées avant écriture.
 - Écriture en `append` asynchrone, compactage quand le fichier dépasse 500 lignes (`USERMEM_KEEP` × 1,25). En RAM il n'y a qu'un compteur de lignes par personne : le coût mémoire est négligeable (RSS ~100 Mo sur 256 Mo, inchangé).
 
@@ -86,7 +86,7 @@ De temps en temps, le pont glisse dans `users.author.throwback` **un ancien mess
 
 ## Remplissage initial (backfill)
 
-`src/backfill_users.js` relit l'historique récent des salons texte (300 messages par salon par défaut) et remplit les logs, en dédupliquant par id de message. Lecture seule côté Discord, aucun message envoyé. `--self-only` ne reprend que les messages de cûm slayer, en entrées légères (sans contenu) pour le classement.
+`src/backfill_users.js` relit l'historique récent des salons texte (300 messages par salon par défaut) et remplit les logs, en dédupliquant par id de message. Lecture seule côté Discord, aucun message envoyé. `--self-only` ne reprend que les messages de cûm slayer, en entrées légères (sans contenu) pour `/stats`.
 
 ```bash
 # sur la machine Fly, en tant que l'utilisateur node (pour garder les bons droits)

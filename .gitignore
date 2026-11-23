@@ -49,3 +49,7 @@ data/slash-ix/
 # Local Whisper model + venv (box only, never commit)
 models/
 tools/whisper-venv/
+
+# /stats all-time counters and rendered samples (runtime only)
+data/lifetime.json
+stats.png

@@ -21,6 +21,8 @@ const userMem = require('./usermem');
 const images = require('./images');
 const restart = require('./restart');
 const slash = require('./slash');
+const lifetime = require('./lifetime');
+const statsRender = require('./stats_render');
 const followMod = require('./follow');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
@@ -317,6 +319,11 @@ function recordTrigger(message, trigger) {
     fs.renameSync(tmp, TRIGGERS_FILE);
   } catch (err) {
     log(`warn: failed to record trigger: ${err.message}`);
+  }
+  try {
+    lifetime.bumpTrigger(trigger);
+  } catch (err) {
+    log(`warn: failed to bump lifetime trigger: ${err.message}`);
   }
   try {
     scope.recordInteraction(message.author.id, `trigger:${trigger}`);
@@ -1088,11 +1095,21 @@ async function registerSlashCommands(c) {
     await slash.registerGuildCommands({
       applicationCommands: c.application.commands,
       guildIds: [...allowedGuilds],
-      commands: [restart.commandPayload(), slash.classementPayload(), slash.fichePayload()],
+      commands: [restart.commandPayload(), slash.statsPayload(), slash.fichePayload()],
       log,
     });
   } catch (err) {
     log(`slash command registration failed: ${err.message}`);
+  }
+  try {
+    await slash.removeGuildCommands({
+      applicationCommands: c.application.commands,
+      guildIds: [...allowedGuilds],
+      names: slash.RETIRED_COMMANDS,
+      log,
+    });
+  } catch (err) {
+    log(`slash retired command cleanup failed: ${err.message}`);
   }
 }
 
@@ -1145,7 +1162,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 });
 
 
-/** Slash/command responses (/classement, /fiche, /restart) should not open a follow window. */
+/** Slash/command responses (/stats, /fiche, /restart) should not open a follow window. */
 function isSlashResponse(message) {
   return Boolean(message.interaction || message.interactionMetadata);
 }
@@ -1242,13 +1259,13 @@ client.on('messageCreate', async (message) => {
       if (ru && !ru.bot && message.guildId && channelInAgents(message.guild, message.channelId)) {
         try { roast.recordContact(ru.id, message.channelId); } catch (err) { log(`warn: recordContact failed: ${err.message}`); }
       }
-      // Light count of our own guild messages for /classement. Never trigger
+      // Light count of our own guild messages for /stats. Never trigger
       // on ourselves (return below): no webhook, no throwback, no self-reply.
       if (message.guildId && USERMEM_ENABLED && allowedGuilds.has(message.guildId) && !message.system) {
         userMem.recordMessage(message, { selfId: client.user.id }).catch((err) => log(`warn: usermem self append failed: ${err.message}`));
       }
       // Conversation follow: open/refresh a short window in this guild
-      // channel. Slash responses (/classement, /fiche, /restart) do not start one.
+      // channel. Slash responses (/stats, /fiche, /restart) do not start one.
       if (
         followSessions.enabled
         && message.guildId
@@ -1293,6 +1310,16 @@ client.on('messageCreate', async (message) => {
     // Per-user memory: log every guild message (never DMs). Fire-and-forget.
     if (!isDm && USERMEM_ENABLED) {
       userMem.recordMessage(message, { selfId: client.user?.id }).catch((err) => log(`warn: usermem append failed: ${err.message}`));
+    }
+    // All-time media counters (guild only, cheap: no download).
+    if (!isDm && (message.attachments?.size || message.embeds?.length)) {
+      try {
+        const imgN = images.collectImages(message).length;
+        const vidN = images.collectVideos(message).length;
+        if (imgN || vidN) lifetime.bumpMedia({ images: imgN, videos: vidN });
+      } catch (err) {
+        log(`warn: lifetime media bump failed: ${err.message}`);
+      }
     }
 
     // Once the consecutive bot-reply cap is hit, ignore bot authors silently
@@ -1499,38 +1526,51 @@ function slashAllowed(interaction) {
   return allowedGuilds.has(interaction.guildId);
 }
 
-async function handleClassementCommand(interaction) {
+let statsRendering = false;
+
+async function handleStatsCommand(interaction) {
   if (!slashAllowed(interaction)) {
     await interaction.reply({ content: 'Serveur non autorisé.', flags: 64 }).catch(() => {});
     return;
   }
   const userId = interaction.user.id;
   const now = Date.now();
-  const cd = slash.checkCooldown(slash.CLASSEMENT, userId, slash.CLASSEMENT_COOLDOWN_MS, now);
+  const cd = slash.checkCooldown(slash.STATS, userId, slash.STATS_COOLDOWN_MS, now);
   if (!cd.ok) {
-    await interaction.reply({ content: slash.COOLDOWN_CLASSEMENT, flags: 64 }).catch(() => {});
+    await interaction.reply({ content: slash.COOLDOWN_STATS, flags: 64 }).catch(() => {});
     return;
   }
-  slash.markCooldown(slash.CLASSEMENT, userId, now);
-  const period = interaction.options.getString('periode') || '7j';
-  const channel = interaction.options.getChannel('salon');
-  const board = userMem.leaderboard({
-    period,
-    channelId: channel?.id || null,
-    limit: 10,
-    now,
-    selfId: client.user?.id,
-  });
-  const embed = slash.buildClassementEmbed({
-    period: board.period,
-    channelName: channel?.name || null,
-    rows: board.rows,
-  });
-  log(`slash /classement user=${userId} period=${board.period} channel=${channel?.id || 'all'} rows=${board.rows.length}`);
-  await interaction.reply({
-    embeds: [embed],
-    allowedMentions: { parse: [] },
-  }).catch((err) => log(`slash /classement reply failed: ${err.message}`));
+  // One render at a time on the 256 MB machine: refuse instead of queueing.
+  if (statsRendering) {
+    await interaction.reply({ content: slash.STATS_BUSY, flags: 64 }).catch(() => {});
+    return;
+  }
+  slash.markCooldown(slash.STATS, userId, now);
+  statsRendering = true;
+  const t0 = Date.now();
+  try {
+    await interaction.deferReply();
+    try { lifetime.bumpStats(); } catch (err) { log(`warn: lifetime stats bump failed: ${err.message}`); }
+    const out = await statsRender.renderFresh({ selfId: client.user?.id, now: Date.now() });
+    const rss = (process.memoryUsage.rss() / 1048576).toFixed(1);
+    log(`slash /stats user=${userId} bytes=${out.bytes} ms=${Date.now() - t0} messages=${out.stats.messages} rss_mb=${rss}`);
+    await interaction.editReply({
+      files: [{ attachment: out.buffer, name: 'cum-slayer-stats.png' }],
+      allowedMentions: { parse: [] },
+    });
+  } catch (err) {
+    log(`slash /stats failed: ${err.message}`);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.deleteReply().catch(() => {});
+        await interaction.followUp({ content: slash.STATS_ERROR, flags: 64 });
+      } else {
+        await interaction.reply({ content: slash.STATS_ERROR, flags: 64 });
+      }
+    } catch { /* ignore */ }
+  } finally {
+    statsRendering = false;
+  }
 }
 
 async function handleFicheCommand(interaction) {
@@ -1655,8 +1695,8 @@ client.on('interactionCreate', async (interaction) => {
         await handleRestartCommand(interaction);
         return;
       }
-      if (name === slash.CLASSEMENT) {
-        await handleClassementCommand(interaction);
+      if (name === slash.STATS) {
+        await handleStatsCommand(interaction);
         return;
       }
       if (name === slash.FICHE) {

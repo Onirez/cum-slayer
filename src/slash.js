@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Guild slash commands other than /restart: /classement (local leaderboard)
- * and /fiche (AI portrait via the routine webhook).
+ * Guild slash commands other than /restart: /stats (local PNG, no AI)
+ * and /fiche (AI portrait via the routine webhook). /classement was retired
+ * and is unregistered at startup (RETIRED_COMMANDS).
  *
  * Interaction tokens are stored on disk so act.sh can follow up a deferred
  * /fiche. The token is never logged, never put in a webhook payload, and
@@ -16,9 +17,10 @@ const { sanitizeMassMentions, allowedMentions } = require('./lib');
 let DATA_DIR;
 try { DATA_DIR = require('./config').DATA_DIR; } catch { DATA_DIR = path.join(__dirname, 'data'); }
 
-const CLASSEMENT = 'classement';
+const STATS = 'stats';
 const FICHE = 'fiche';
-const CLASSEMENT_COOLDOWN_MS = 30_000;
+const RETIRED_COMMANDS = ['classement'];
+const STATS_COOLDOWN_MS = 30_000;
 const FICHE_COOLDOWN_MS = 60_000;
 const FICHE_HOURLY_MAX = 20;
 const FICHE_HOURLY_MS = 60 * 60 * 1000;
@@ -27,7 +29,9 @@ const FICHE_HINT = 'Portrait rôti et court, uniquement à partir des notes et m
 
 const NO_DATA_REPLY = 'Rien sur lui, il est trop insignifiant.';
 const BOT_REPLY = "Je fais pas la bio d'un bot, ça m'intéresse pas.";
-const COOLDOWN_CLASSEMENT = 'Doucement, le classement va pas s\'évaporer. Réessaie dans un instant.';
+const COOLDOWN_STATS = 'Doucement, les stats vont pas s\'évaporer. Réessaie dans 30 secondes.';
+const STATS_BUSY = 'Je suis déjà en train de dessiner des stats, réessaie dans un instant.';
+const STATS_ERROR = 'J\'ai raté le dessin des stats. Réessaie plus tard.';
 const COOLDOWN_FICHE = 'Doucement, une fiche à la fois.';
 const HOURLY_FICHE = "J'ai déjà fait mon quota de biographies. Réessaie plus tard.";
 
@@ -38,32 +42,12 @@ function ixPath() {
   return process.env.SLASH_IX_FILE || path.join(DATA_DIR, 'slash-ix.json');
 }
 
-function classementPayload() {
+function statsPayload() {
   return {
-    name: CLASSEMENT,
-    description: 'Top 10 des plus actifs, humains et bots (local, sans IA).',
+    name: STATS,
+    description: 'Infographie des stats du serveur, calculée en direct (local, sans IA).',
     type: 1,
     dm_permission: false,
-    options: [
-      {
-        type: 3, // STRING
-        name: 'periode',
-        description: 'Fenêtre de temps (défaut : 7 jours).',
-        required: false,
-        choices: [
-          { name: '7 jours', value: '7j' },
-          { name: '30 jours', value: '30j' },
-          { name: 'Tout', value: 'tout' },
-        ],
-      },
-      {
-        type: 7, // CHANNEL
-        name: 'salon',
-        description: 'Limiter à un salon.',
-        required: false,
-        channel_types: [0, 5, 10, 11, 12],
-      },
-    ],
   };
 }
 
@@ -113,38 +97,6 @@ function markFicheHourly(now = Date.now()) {
 function resetLimitsForTests() {
   cooldowns.clear();
   ficheHourly.length = 0;
-}
-
-function periodLabel(period) {
-  if (period === '30j') return '30 jours';
-  if (period === 'tout') return 'depuis toujours';
-  return '7 jours';
-}
-
-function buildClassementEmbed({ period = '7j', channelName = null, rows = [] } = {}) {
-  const where = channelName ? ` dans #${String(channelName).replace(/^#/, '')}` : '';
-  const title = `Le top 10 de ceux qui parlent trop — ${periodLabel(period)}`;
-  let description;
-  if (!rows.length) {
-    description = channelName
-      ? `Personne n'a pipé mot${where}. Un silence capital.`
-      : `Personne. Le serveur est un désert, bravo. (${periodLabel(period)})`;
-  } else {
-    const lines = rows.map((r, i) => {
-      const name = r.name || r.id;
-      const mark = r.bot ? ' 🤖' : '';
-      const ch = r.top_channel ? ` · ${r.top_channel}` : '';
-      const n = r.count === 1 ? '1 message' : `${r.count} messages`;
-      return `**${i + 1}.** ${name}${mark} — ${n}${ch}`;
-    });
-    description = (channelName ? `Salon${where}.\n` : '') + lines.join('\n');
-  }
-  return {
-    title: String(title).slice(0, 256),
-    description: String(description).slice(0, 4096),
-    color: 0x8B0000,
-    footer: { text: "Aucune IA n'a été dérangée · t'es pas dans le top ? Logique." },
-  };
 }
 
 function decideFiche({ target, selfId, isOptedOut, context } = {}) {
@@ -339,28 +291,50 @@ async function registerGuildCommands({ applicationCommands, guildIds, commands, 
   return results;
 }
 
+/** Delete retired guild commands (e.g. /classement) if they are still registered. */
+async function removeGuildCommands({ applicationCommands, guildIds, names, log } = {}) {
+  if (!applicationCommands || typeof applicationCommands.fetch !== 'function') {
+    throw new Error('applicationCommands is required');
+  }
+  const wanted = new Set((names || []).map(String));
+  const ids = [...new Set((guildIds || []).map(String).filter(Boolean))];
+  const results = [];
+  for (const guildId of ids) {
+    const existing = await applicationCommands.fetch({ guildId });
+    const list = existing && typeof existing.values === 'function' ? [...existing.values()] : [];
+    for (const cmd of list) {
+      if (!cmd || !wanted.has(cmd.name)) continue;
+      await applicationCommands.delete(cmd.id, guildId);
+      if (log) log(`slash /${cmd.name} unregistered guild=${guildId}`);
+      results.push({ guildId, name: cmd.name, action: 'deleted', id: cmd.id });
+    }
+  }
+  return results;
+}
+
 module.exports = {
-  CLASSEMENT,
+  STATS,
+  RETIRED_COMMANDS,
   FICHE,
-  CLASSEMENT_COOLDOWN_MS,
+  STATS_COOLDOWN_MS,
   FICHE_COOLDOWN_MS,
   FICHE_HOURLY_MAX,
   FICHE_HOURLY_MS,
   FICHE_HINT,
   NO_DATA_REPLY,
   BOT_REPLY,
-  COOLDOWN_CLASSEMENT,
+  COOLDOWN_STATS,
+  STATS_BUSY,
+  STATS_ERROR,
   COOLDOWN_FICHE,
   HOURLY_FICHE,
-  classementPayload,
+  statsPayload,
   fichePayload,
   checkCooldown,
   markCooldown,
   checkFicheHourly,
   markFicheHourly,
   resetLimitsForTests,
-  periodLabel,
-  buildClassementEmbed,
   decideFiche,
   buildFichePayload,
   payloadContainsSecret,
@@ -371,4 +345,5 @@ module.exports = {
   followUpFiche,
   redactToken,
   registerGuildCommands,
+  removeGuildCommands,
 };

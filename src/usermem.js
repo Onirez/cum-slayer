@@ -173,7 +173,7 @@ function append(userId, entry) {
 }
 
 /** Record a discord.js Message (guild only, never DMs). Own-bot messages
- *  are stored as light count-only entries for /classement (no content). */
+ *  are stored as light count-only entries for /stats (no content). */
 function recordMessage(message, { selfId } = {}) {
   if (!message || !message.guildId || !message.author) return Promise.resolve(false);
   const isSelf = Boolean(selfId && String(message.author.id) === String(selfId));

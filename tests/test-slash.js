@@ -1,5 +1,5 @@
 'use strict';
-// Offline tests for /classement, /fiche, and interaction follow-up. No Discord, no Fly.
+// Offline tests for /stats registration, /fiche, and interaction follow-up. No Discord, no Fly.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -43,15 +43,12 @@ function add(id, { t, ch, cn, c, n, b } = {}) {
 
 // --- command payloads ---
 ok(um.KEEP === 400, 'default usermem cap is 400 messages per user');
-const classCmd = slash.classementPayload();
-ok(classCmd.name === 'classement' && classCmd.type === 1 && classCmd.dm_permission === false, '/classement is a guild chat-input command');
-ok(!classCmd.default_member_permissions, '/classement is visible to everyone (no admin permission bit)');
-ok(/bots/i.test(classCmd.description), '/classement description says bots are included');
-const periodOpt = (classCmd.options || []).find((o) => o.name === 'periode');
-const salonOpt = (classCmd.options || []).find((o) => o.name === 'salon');
-ok(periodOpt && periodOpt.type === 3 && periodOpt.required === false, 'periode is an optional string');
-ok(periodOpt.choices.map((c) => c.value).join(',') === '7j,30j,tout', 'periode choices are 7j / 30j / tout');
-ok(salonOpt && salonOpt.type === 7 && salonOpt.required === false, 'salon is an optional channel');
+const statsCmd = slash.statsPayload();
+ok(statsCmd.name === 'stats' && statsCmd.type === 1 && statsCmd.dm_permission === false, '/stats is a guild chat-input command');
+ok(!statsCmd.default_member_permissions, '/stats is visible to everyone');
+ok(!statsCmd.options || statsCmd.options.length === 0, '/stats has no options');
+ok(typeof slash.classementPayload !== 'function' && typeof slash.buildClassementEmbed !== 'function', '/classement helpers are gone');
+ok(slash.RETIRED_COMMANDS.includes('classement'), 'classement is listed as a retired command to unregister');
 
 const ficheCmd = slash.fichePayload();
 ok(ficheCmd.name === 'fiche' && ficheCmd.type === 1 && ficheCmd.dm_permission === false, '/fiche is a guild chat-input command');
@@ -100,22 +97,13 @@ for (let i = 0; i < 12; i++) {
 const top = um.leaderboard({ period: '7j', now, selfId: SELF, limit: 10 });
 ok(top.rows.length === 10, 'leaderboard is capped at 10');
 
-const embed = slash.buildClassementEmbed({ period: '7j', rows: week.rows });
-ok(embed.title && /parlent trop|bavard/i.test(embed.title) && /7 jours/.test(embed.title), 'classement embed has an arrogant period title');
-ok(/Alice/.test(embed.description) && /\*\*1\.\*\*/.test(embed.description), 'embed lists ranks and names');
-ok(/NotAHuman 🤖/.test(embed.description) && /cûm slayer 🤖/.test(embed.description) && !/Alice 🤖/.test(embed.description), 'embed marks this bot and other bots with 🤖, not humans');
-ok(!embed.description.includes('<@'), 'embed does not ping (no <@id> mentions)');
-ok(embed.footer && /Aucune IA/.test(embed.footer.text), 'footer says no AI was used');
-const emptyEmbed = slash.buildClassementEmbed({ period: '7j', rows: [] });
-ok(/désert|Personne/i.test(emptyEmbed.description), 'empty board has a roast empty state');
-
 // --- cooldowns ---
 slash.resetLimitsForTests();
-ok(slash.checkCooldown('classement', A, slash.CLASSEMENT_COOLDOWN_MS, now).ok, 'first /classement is allowed');
-slash.markCooldown('classement', A, now);
-ok(!slash.checkCooldown('classement', A, slash.CLASSEMENT_COOLDOWN_MS, now + 1_000).ok, 'same user is on a 30 s classement cooldown');
-ok(slash.checkCooldown('classement', B, slash.CLASSEMENT_COOLDOWN_MS, now + 1_000).ok, 'another user is not blocked by the first cooldown');
-ok(slash.checkCooldown('classement', A, slash.CLASSEMENT_COOLDOWN_MS, now + slash.CLASSEMENT_COOLDOWN_MS).ok, 'classement allowed again after 30 s');
+ok(slash.checkCooldown('stats', A, slash.STATS_COOLDOWN_MS, now).ok, 'first /stats is allowed');
+slash.markCooldown('stats', A, now);
+ok(!slash.checkCooldown('stats', A, slash.STATS_COOLDOWN_MS, now + 1_000).ok, 'same user is on a 30 s stats cooldown');
+ok(slash.checkCooldown('stats', B, slash.STATS_COOLDOWN_MS, now + 1_000).ok, 'another user is not blocked by the first cooldown');
+ok(slash.checkCooldown('stats', A, slash.STATS_COOLDOWN_MS, now + slash.STATS_COOLDOWN_MS).ok, 'stats allowed again after 30 s');
 
 ok(slash.checkCooldown('fiche', A, slash.FICHE_COOLDOWN_MS, now).ok, 'first /fiche is allowed');
 slash.markCooldown('fiche', A, now);
@@ -257,9 +245,8 @@ async function awaitOrNot() { return true; }
   // usermem is not written by slash helpers (no recordMessage call path)
   const before = um.readLog(A).length;
   ok(before > 0, 'precondition: Alice already has log lines');
-  // decide/build/classement do not append
+  // decide/build do not append
   um.leaderboard({ period: '7j', now, selfId: SELF });
-  slash.buildClassementEmbed({ period: '7j', rows: [] });
   slash.buildFichePayload({
     guildId: '1', channelId: '2', inAgents: false,
     requester: { id: B, username: 'b', display_name: 'b', bot: false },
