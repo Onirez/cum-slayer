@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Même usage que scripts/act.sh : remote-act.sh [--dry-run] [--file image.png]... < json
-# Inline les images locales ( --file ou JSON files:[{path}] ) en base64
+# Même usage que scripts/act.sh : remote-act.sh [--dry-run] [--file file.zip]... < json
+# Inline les fichiers locaux ( --file ou JSON files:[{path,"name"}] ) en base64
 # avant POST /act, pour que Fly n'ait jamais besoin d'un chemin de la box.
 # À pointer depuis la routine IA une fois le pont hébergé (Fly ou autre).
 set -euo pipefail
@@ -36,7 +36,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "Usage: $0 [--dry-run] [--file image.png]... < json" >&2
+      echo "Usage: $0 [--dry-run] [--file file.zip]... < json" >&2
       exit 2
       ;;
   esac

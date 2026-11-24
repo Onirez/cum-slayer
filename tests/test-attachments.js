@@ -96,15 +96,18 @@ check('reject 5 files and oversize', () => {
   }
 });
 
-check('accept exactly 8 MiB and 4 files', () => {
+check('accept exactly 8 MiB, reject total over the message cap', () => {
   const padded = Buffer.concat([PNG, Buffer.alloc(att.MAX_BYTES - PNG.length)]);
-  // magic still png at start
   const t = writeTemp('ok.png', padded);
   try {
     const one = att.loadFiles([{ path: t.path }]);
     assert.strictEqual(one[0].bytes, att.MAX_BYTES);
-    const four = att.loadFiles(Array.from({ length: 4 }, () => ({ path: t.path })));
-    assert.strictEqual(four.length, 4);
+    const two = att.loadFiles(Array.from({ length: 2 }, () => ({ path: t.path })));
+    assert.strictEqual(two.length, 2);
+    assert.throws(
+      () => att.loadFiles(Array.from({ length: 3 }, () => ({ path: t.path }))),
+      /too large in total/,
+    );
   } finally {
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
@@ -179,8 +182,8 @@ check('act.sh --dry-run --file does not post and mentions the image', () => {
   }
 });
 
-check('act.sh rejects a non-image file cleanly', () => {
-  const t = writeTemp('note.txt', Buffer.from('hello world, not an image'));
+check('act.sh rejects an executable cleanly', () => {
+  const t = writeTemp('payload.exe', Buffer.from('MZ this is not allowed'));
   try {
     const r = spawnSync('bash', [ACT_SH, '--dry-run', '--file', t.path], {
       input: JSON.stringify({ channel_id: '1', message_id: '2', reply: 'x' }),
@@ -188,7 +191,54 @@ check('act.sh rejects a non-image file cleanly', () => {
       env: { ...process.env, ACT_REMOTE_URL: '', ACT_SHARED_SECRET: '' },
     });
     assert.notStrictEqual(r.status, 0);
-    assert.match(`${r.stderr}\n${r.stdout}`, /not a valid image/);
+    assert.match(`${r.stderr}\n${r.stdout}`, /executable or installer/);
+  } finally {
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+
+const EMPTY_ZIP = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
+const MIN_PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
+
+check('load zip, html, txt, json, pdf and rename via name', () => {
+  const z = writeTemp('game.bin', EMPTY_ZIP);
+  const h = writeTemp('page.html', Buffer.from('<!DOCTYPE html><title>x</title>'));
+  const txt = writeTemp('note.txt', Buffer.from('hello world, not an image'));
+  try {
+    const zip = att.loadFiles([{ path: z.path, name: 'snake.zip' }]);
+    assert.strictEqual(zip[0].name, 'snake.zip');
+    assert.strictEqual(zip[0].content_type, 'application/zip');
+    const html = att.loadFiles([{ path: h.path }]);
+    assert.strictEqual(html[0].content_type, 'text/html');
+    const notes = att.loadFiles([{ path: txt.path, name: 'readme.md' }]);
+    assert.strictEqual(notes[0].name, 'readme.md');
+    assert.strictEqual(notes[0].content_type, 'text/markdown');
+    const js = att.loadFiles([{ name: 'app.js', data: Buffer.from('console.log(1)').toString('base64') }]);
+    assert.strictEqual(js[0].content_type, 'text/javascript');
+    const pdf = att.loadFiles([{ name: 'doc.pdf', data: MIN_PDF.toString('base64') }]);
+    assert.strictEqual(pdf[0].content_type, 'application/pdf');
+    const jsond = att.loadFiles([{ name: 'data.json', data: Buffer.from('{"ok":true}').toString('base64') }]);
+    assert.strictEqual(jsond[0].content_type, 'application/json');
+  } finally {
+    fs.rmSync(z.dir, { recursive: true, force: true });
+    fs.rmSync(h.dir, { recursive: true, force: true });
+    fs.rmSync(txt.dir, { recursive: true, force: true });
+  }
+});
+
+check('refuse executables, fake zip, fake image name, and symlinks', () => {
+  for (const ext of ['exe', 'bat', 'cmd', 'scr', 'msi', 'ps1', 'vbs', 'jar', 'apk', 'dmg']) {
+    assert.throws(() => att.loadFiles([{ name: `x.${ext}`, data: NOT_IMAGE.toString('base64') }]), /executable or installer/);
+  }
+  assert.throws(() => att.loadFiles([{ name: 'game.zip', data: NOT_IMAGE.toString('base64') }]), /not a valid zip/);
+  assert.throws(() => att.loadFiles([{ name: 'pic.png', data: NOT_IMAGE.toString('base64') }]), /not a valid image/);
+  assert.throws(() => att.loadFiles([{ name: 'secret.bin', data: NOT_IMAGE.toString('base64') }]), /not allowed/);
+  const t = writeTemp('real.txt', Buffer.from('hello'));
+  const link = path.join(t.dir, 'alias.txt');
+  try {
+    fs.symlinkSync(t.path, link);
+    assert.throws(() => att.loadFiles([{ path: link }]), /symbolic links/);
   } finally {
     fs.rmSync(t.dir, { recursive: true, force: true });
   }

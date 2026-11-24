@@ -24,7 +24,7 @@ const attachments = require('./attachments');
 const DIR = __dirname;
 
 function usage() {
-  console.error('Usage: act.sh [--dry-run] [--file image.png]... < json');
+  console.error('Usage: act.sh [--dry-run] [--file file.zip]... < json');
   process.exit(2);
 }
 
@@ -198,7 +198,7 @@ async function main() {
     process.exit(2);
   }
   if (hasFiles && interactionId) {
-    console.error('error: image attachments are not supported on interaction follow-ups');
+    console.error('error: file attachments are not supported on interaction follow-ups');
     process.exit(2);
   }
   if (react && !messageId) {

@@ -65,7 +65,7 @@ Aucun secret, aucun jeton, aucune URL de webhook n’y figure. Le pont tronque l
 
 | Script | Rôle |
 | --- | --- |
-| `scripts/act.sh` | Appel principal : répondre, réagir, joindre jusqu’à 4 images (png/jpg/webp/gif, 8 Mio, `--file` ou JSON `files`), écrire la mémoire, créer une skill, proposer un plan d’actions |
+| `scripts/act.sh` | Appel principal : répondre, réagir, joindre jusqu’à 4 fichiers (zip, html, txt, md, json, js, css, py, csv, pdf, mp3/mp4, images, etc. ; 8 Mio/fichier, 20 Mio au total ; `--file` ou JSON `files`, `name` optionnel), écrire la mémoire, créer une skill, proposer un plan d’actions |
 | `scripts/send.sh`, `reply.sh`, `dm.sh`, `embed.sh`, `react.sh` | Secours, un outil à la fois |
 | `scripts/context.sh` | Relire un historique autour d’un `message_id` (`context.sh <channel_id> <message_id>`). Chaque message du JSON inclut maintenant `images` / `videos` (urls) s’il y a des pièces jointes — pour analyser une vidéo plus ancienne que la fenêtre `recent`. |
 | `scripts/img.sh` | Télécharger une photo du payload (`img.sh <url>`) depuis le CDN Discord vers `data/img-cache/`, affiche le chemin local (max 10 Mo, 15 s, hôtes `cdn.discordapp.com` / `media.discordapp.net` uniquement ; cache purgé après 24 h) |
