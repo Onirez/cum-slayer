@@ -75,7 +75,7 @@ Aucun secret, aucun jeton, aucune URL de webhook n’y figure. Le pont tronque l
 | `scripts/mod.sh` | Lectures serveur uniquement (`list_roles`, `member_info`, …) |
 | `scripts/roast_now.sh` | Déclencher un roast à la main |
 
-Quand la routine ne tourne pas sur la même machine que le pont, ces scripts détectent `ACT_REMOTE_URL` + `ACT_SHARED_SECRET` et proxifient vers `POST /act` ou `POST /run` (`deploy/fly/remote-tool.sh`).
+Quand la routine ne tourne pas sur la même machine que le pont, ces scripts détectent `ACT_REMOTE_URL` + `ACT_SHARED_SECRET` et proxifient vers `POST /act` ou `POST /run` (`deploy/fly/remote-tool.sh`). Le wrapper `deploy/fly/remote-act.sh` (souvent appelé directement par la routine) accepte les mêmes `--file` / `files` que `act.sh` et convertit les chemins locaux en base64 avant l’envoi.
 
 ## API HTTP du pont
 
