@@ -34,15 +34,17 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   shift
 fi
 
-STDIN=""
-if [[ "$TOOL" == "act" ]]; then
-  STDIN="$(cat)"
-elif [[ ! -t 0 ]]; then
-  STDIN="$(cat)"
+# Large act payloads (inlined images) must never go through the environment.
+_stdin_file=""
+_cleanup() { if [[ -n "${_stdin_file}" && -f "${_stdin_file}" ]]; then rm -f "${_stdin_file}"; fi; }
+trap _cleanup EXIT
+if [[ "$TOOL" == "act" ]] || [[ ! -t 0 ]]; then
+  _stdin_file="$(mktemp)"
+  cat > "$_stdin_file"
 fi
 
 _RT_ARGS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[2:]))' x "$@")"
-export _RT_URL="$URL" _RT_TOOL="$TOOL" _RT_DRY="$DRY" _RT_STDIN="$STDIN" _RT_ARGS_JSON
+export _RT_URL="$URL" _RT_TOOL="$TOOL" _RT_DRY="$DRY" _RT_STDIN_FILE="${_stdin_file}" _RT_ARGS_JSON
 python3 - << 'PY'
 import json, os, sys, urllib.request, urllib.error
 
@@ -50,14 +52,16 @@ url = os.environ["_RT_URL"].rstrip("/")
 secret = os.environ["ACT_SHARED_SECRET"]
 tool = os.environ["_RT_TOOL"]
 dry = os.environ.get("_RT_DRY") == "1"
-stdin = os.environ.get("_RT_STDIN", "")
+stdin_path = os.environ.get("_RT_STDIN_FILE") or ""
 args = json.loads(os.environ.get("_RT_ARGS_JSON", "[]"))
+stdin_bytes = open(stdin_path, "rb").read() if stdin_path else b""
 
 if tool == "act":
     req_url = url + "/act" + ("?dry_run=1" if dry else "")
-    body = stdin.encode("utf-8")
+    body = stdin_bytes
 else:
     req_url = url + "/run"
+    stdin = stdin_bytes.decode("utf-8") if stdin_bytes else ""
     body = json.dumps({"tool": tool, "args": args, "stdin": stdin, "dry_run": dry}).encode("utf-8")
 
 req = urllib.request.Request(
@@ -67,7 +71,7 @@ req = urllib.request.Request(
     method="POST",
 )
 try:
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         raw = resp.read()
         status = resp.status
 except urllib.error.HTTPError as e:

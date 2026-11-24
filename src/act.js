@@ -19,11 +19,12 @@ const {
 const { runActions, createPlan, classify } = require('./mod');
 const scope = require('./scope');
 const slash = require('./slash');
+const attachments = require('./attachments');
 
 const DIR = __dirname;
 
 function usage() {
-  console.error('Usage: act.sh [--dry-run] < json');
+  console.error('Usage: act.sh [--dry-run] [--file image.png]... < json');
   process.exit(2);
 }
 
@@ -57,12 +58,28 @@ function runCli(script, args, dryRun) {
   };
 }
 
-async function sendReply(channelId, messageId, text, dryRun) {
-  const contentChunks = splitContent(sanitizeMassMentions(text));
+function contentChunksForPost(text, hasFiles) {
+  const chunks = splitContent(sanitizeMassMentions(text || '')).filter(Boolean);
+  if (chunks.length) return chunks;
+  return hasFiles ? [''] : [];
+}
+
+async function postChannelMessage({ channelId, body, files, first, dryRun }) {
+  const form = first && files && files.length ? attachments.buildDiscordForm(body, files) : undefined;
+  return discordRequest({
+    method: 'POST',
+    path: `/channels/${encodeURIComponent(channelId)}/messages`,
+    body: form ? undefined : body,
+    form,
+    dryRun,
+  });
+}
+
+async function sendReply(channelId, messageId, text, dryRun, files = []) {
+  const contentChunks = contentChunksForPost(text, files.length > 0);
   const ids = [];
   let first = true;
   for (const chunk of contentChunks) {
-    if (!chunk) continue;
     const body = {
       content: chunk,
       allowed_mentions: allowedMentions({ repliedUser: first }),
@@ -74,39 +91,34 @@ async function sendReply(channelId, messageId, text, dryRun) {
         fail_if_not_exists: false,
       };
     }
-    const res = await discordRequest({
-      method: 'POST',
-      path: `/channels/${encodeURIComponent(channelId)}/messages`,
-      body,
-      dryRun,
-    });
+    const res = await postChannelMessage({ channelId, body, files, first, dryRun });
     if (res.data?.id) ids.push(res.data.id);
     first = false;
   }
   if (!dryRun) {
-    console.log(`posted reply ids=${ids.join(',') || '(none)'} channel=${channelId} ref=${messageId}`);
+    const att = files.length ? ` files=${attachments.describeFiles(files)}` : '';
+    console.log(`posted reply ids=${ids.join(',') || '(none)'} channel=${channelId} ref=${messageId}${att}`);
   }
   return ids;
 }
 
-async function sendStandalone(channelId, text, dryRun) {
-  const clean = sanitizeMassMentions(text);
+async function sendStandalone(channelId, text, dryRun, files = []) {
+  const clean = sanitizeMassMentions(text || '');
   // Ping only users explicitly written as <@id> in the text (max 3).
   const pings = [...new Set([...clean.matchAll(/<@!?(\d{5,25})>/g)].map((m) => m[1]))].slice(0, 3);
+  const contentChunks = contentChunksForPost(text, files.length > 0);
   const ids = [];
   let first = true;
-  for (const chunk of splitContent(clean)) {
-    if (!chunk) continue;
-    const res = await discordRequest({
-      method: 'POST',
-      path: `/channels/${encodeURIComponent(channelId)}/messages`,
-      body: { content: chunk, allowed_mentions: allowedMentions({ userIds: first ? pings : [] }) },
-      dryRun,
-    });
+  for (const chunk of contentChunks) {
+    const body = { content: chunk, allowed_mentions: allowedMentions({ userIds: first ? pings : [] }) };
+    const res = await postChannelMessage({ channelId, body, files, first, dryRun });
     if (res.data?.id) ids.push(res.data.id);
     first = false;
   }
-  if (!dryRun) console.log(`posted message ids=${ids.join(',') || '(none)'} channel=${channelId} standalone pings=${pings.join(',') || 'none'}`);
+  if (!dryRun) {
+    const att = files.length ? ` files=${attachments.describeFiles(files)}` : '';
+    console.log(`posted message ids=${ids.join(',') || '(none)'} channel=${channelId} standalone pings=${pings.join(',') || 'none'}${att}`);
+  }
   return ids;
 }
 
@@ -120,9 +132,42 @@ async function addReaction(channelId, messageId, emoji, dryRun) {
   if (!dryRun) console.log(`reacted channel=${channelId} message=${messageId} emoji=${emoji}`);
 }
 
+function parseArgv(argv) {
+  const files = [];
+  let dryRun = process.env.DRY_RUN === '1';
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--dry-run') dryRun = true;
+    else if (a === '--file' || a === '-f') {
+      const p = argv[++i];
+      if (!p) {
+        console.error('error: --file needs a path');
+        process.exit(2);
+      }
+      files.push(p);
+    } else if (a.startsWith('--file=')) files.push(a.slice('--file='.length));
+    else usage();
+  }
+  return { files, dryRun };
+}
+
+function loadRequestFiles(body, cliPaths) {
+  try {
+    const specs = attachments.collectFromBodyAndCli(body, cliPaths);
+    if (body && body.files) delete body.files;
+    return attachments.toDiskless(attachments.loadFiles(specs, { keepData: false }));
+  } catch (err) {
+    if (err && err.name === 'AttachError') {
+      console.error(err.message);
+      process.exit(err.exitCode || 2);
+    }
+    throw err;
+  }
+}
+
 async function main() {
-  const dryRun = process.env.DRY_RUN === '1' || process.argv.includes('--dry-run');
-  const raw = (await readStdin()).trim();
+  const { files: cliFiles, dryRun } = parseArgv(process.argv.slice(2));
+  let raw = (await readStdin()).trim();
   if (!raw) usage();
 
   let body;
@@ -132,11 +177,15 @@ async function main() {
     console.error(`error: invalid JSON: ${err.message}`);
     process.exit(2);
   }
+  raw = '';
 
+  const files = loadRequestFiles(body, cliFiles);
   const channelId = body.channel_id ? String(body.channel_id) : '';
   const messageId = body.message_id ? String(body.message_id) : '';
   const interactionId = body.interaction_id ? String(body.interaction_id) : '';
-  const reply = body.reply == null || body.reply === '' ? null : String(body.reply);
+  const replyText = body.reply == null ? '' : String(body.reply);
+  const hasFiles = files.length > 0;
+  const reply = replyText !== '' || hasFiles ? replyText : null;
   const react = body.react == null || body.react === '' ? null : String(body.react);
   const memoryAppend = Array.isArray(body.memory_append) ? body.memory_append : [];
   const userNotes = Array.isArray(body.user_notes) ? body.user_notes.slice(0, 3) : [];
@@ -144,8 +193,12 @@ async function main() {
   const authorId = body.author_id ? String(body.author_id) : '';
   const actions = Array.isArray(body.actions) ? body.actions : [];
 
-  if ((reply || react) && !channelId && !interactionId) {
-    console.error('error: channel_id is required when reply or react is set');
+  if ((reply !== null || react || hasFiles) && !channelId && !interactionId) {
+    console.error('error: channel_id is required when reply, files or react is set');
+    process.exit(2);
+  }
+  if (hasFiles && interactionId) {
+    console.error('error: image attachments are not supported on interaction follow-ups');
     process.exit(2);
   }
   if (react && !messageId) {
@@ -182,7 +235,7 @@ async function main() {
     // Discord Agent Rules: no unsolicited messages. The target must be a
     // recorded bridge trigger, or the channel must be in AGENTS / an interacted DM.
     const trig = messageId ? scope.triggerRecord(messageId) : null;
-    if ((reply !== null || react !== null) && !trig) {
+    if ((reply !== null || react !== null || hasFiles) && !trig) {
       try { await scope.assertMaySpeakIn(channelId); } catch (e) {
         console.error(`error: ${e.message}`);
         process.exit(3);
@@ -193,9 +246,9 @@ async function main() {
     // (e.g. daily_roast); the guard above only lets that through in AGENTS
     // channels, channels with a recent trigger, or interacted DMs.
     if (reply !== null && !messageId) {
-      results.reply = await sendStandalone(channelId, reply, dryRun);
+      results.reply = await sendStandalone(channelId, reply, dryRun, files);
     } else if (reply !== null) {
-      results.reply = await sendReply(channelId, messageId, reply, dryRun);
+      results.reply = await sendReply(channelId, messageId, reply, dryRun, files);
       if (!dryRun && trig && trig.author_id) scope.recordInteraction(trig.author_id, 'replied');
     }
   }

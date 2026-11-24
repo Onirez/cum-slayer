@@ -1,25 +1,68 @@
 #!/usr/bin/env bash
-# Combined fast action: reply, react, memory/skill writes, optional plan.
-# Usage: act.sh [--dry-run] < json
-# JSON may include interaction_id for /fiche (token is held by the bridge, never in the JSON).
+# Combined fast action: reply, react, optional image attachments, then memory/skill writes.
+# Usage: act.sh [--dry-run] [--file image.png]... < json
+#   JSON: {"channel_id","message_id" (null = standalone message in channel_id),
+#          "interaction_id" (optional, /fiche deferred follow-up; token is held by the bridge),
+#          "reply":"text"|null,"react":"emoji"|null,
+#          "files":[{"path":"/abs/image.png"}] or [{"name","content_type","data"}] (base64),
+#          "memory_append":[{"subject","author","text"}],
+#          "skill_create":{"author","trigger","rule"}|null,
+#          "author_id":"real trigger author id","actions":[{"type":...}]}  (see mod.js)
+# --file may be repeated (max 4). Images only (png/jpg/webp/gif), max 8 MiB each.
+# Local paths are inlined as base64 before a remote /act call so the remote host never needs box paths.
 # Reads DISCORD_BOT_TOKEN from the environment only; never prints it.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC="$ROOT/src"
 
+DRY_RUN="${DRY_RUN:-0}"
+FILES=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --file=*)
+      FILES+=("${1#--file=}")
+      shift
+      ;;
+    --file|-f)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --file needs a path" >&2
+        exit 2
+      fi
+      FILES+=("$2")
+      shift 2
+      ;;
+    *)
+      echo "Usage: $0 [--dry-run] [--file image.png]... < json" >&2
+      exit 2
+      ;;
+  esac
+done
+
 if [[ -n "${ACT_REMOTE_URL:-}" && -n "${ACT_SHARED_SECRET:-}" ]]; then
   _tool="$(basename "$0" .sh)"
-  exec "$ROOT/deploy/fly/remote-tool.sh" "$_tool" "$@"
+  _extra=()
+  if [[ "$DRY_RUN" == "1" ]]; then
+    _extra+=(--dry-run)
+  fi
+  _inline=(--inline)
+  for _f in "${FILES[@]}"; do
+    _inline+=(--file "$_f")
+  done
+  node "$SRC/attachments.js" "${_inline[@]}" | "$ROOT/deploy/fly/remote-tool.sh" "$_tool" "${_extra[@]}"
+  exit $?
 fi
-DRY_RUN=0
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN=1
-  shift
-fi
-if [[ $# -gt 0 ]]; then
-  echo "Usage: $0 [--dry-run] < json" >&2
-  exit 2
-fi
+
 export DRY_RUN
-exec node "$SRC/act.js"
+_args=()
+if [[ "$DRY_RUN" == "1" ]]; then
+  _args+=(--dry-run)
+fi
+for _f in "${FILES[@]}"; do
+  _args+=(--file "$_f")
+done
+exec node "$SRC/act.js" "${_args[@]}"

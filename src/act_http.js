@@ -30,7 +30,7 @@ const ALLOWED_TOOLS = Object.freeze({
   roast_now: 'roast_now.sh',
 });
 
-const MAX_BODY = 1_000_000;
+const MAX_BODY = 48 * 1024 * 1024; // 4 images × 8 MiB, base64 + JSON
 const RUN_TIMEOUT_MS = Number(process.env.ACT_HTTP_TIMEOUT_MS || 90_000);
 const config = require('./config');
 const DIR = config.SCRIPTS_DIR;
@@ -245,4 +245,4 @@ function start({ log = console.log, getReady = () => true } = {}) {
   return server;
 }
 
-module.exports = { start, flagOn, authorize, runTool, ALLOWED_TOOLS, timingSafeEqualStr };
+module.exports = { start, flagOn, authorize, runTool, ALLOWED_TOOLS, timingSafeEqualStr, MAX_BODY };

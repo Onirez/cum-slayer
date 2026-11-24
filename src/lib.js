@@ -34,18 +34,42 @@ function requireToken() {
   return token;
 }
 
-async function discordRequest({ method, path, body, dryRun }) {
+async function discordRequest({ method, path, body, form, dryRun }) {
   const url = `${DISCORD_API}${path}`;
-  const json = body === undefined ? undefined : JSON.stringify(body);
+  const json = form || body === undefined ? undefined : JSON.stringify(body);
   if (dryRun) {
-    console.log(`dry-run ${method} ${url}`);
-    if (json !== undefined) console.log(json);
+    if (form) {
+      const parts = [];
+      if (typeof form.entries === 'function') {
+        for (const [k, v] of form.entries()) {
+          if (k === 'payload_json') {
+            try { parts.push(`payload=${JSON.stringify(JSON.parse(String(v)))}`); }
+            catch { parts.push('payload_json'); }
+          } else {
+            const n = v && typeof v === 'object' && (v.name || v.filename) ? (v.name || v.filename) : k;
+            const sz = v && typeof v.size === 'number' ? v.size : '';
+            parts.push(`${k}:${n}${sz !== '' ? `:${sz}` : ''}`);
+          }
+        }
+      }
+      console.log(`dry-run ${method} ${url} multipart ${parts.join(' ') || '(form)'}`);
+    } else {
+      console.log(`dry-run ${method} ${url}`);
+      if (json !== undefined) console.log(json);
+    }
     return { dryRun: true, status: 0, data: null };
   }
   const token = requireToken();
   const headers = { Authorization: `Bot ${token}` };
-  if (json !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(url, { method, headers, body: json });
+  let payload;
+  if (form) {
+    // Let fetch set the multipart boundary. Do not set Content-Type.
+    payload = form;
+  } else {
+    if (json !== undefined) headers['Content-Type'] = 'application/json';
+    payload = json;
+  }
+  const res = await fetch(url, { method, headers, body: payload });
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
