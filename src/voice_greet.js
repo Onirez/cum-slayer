@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_GRACE_MS = 8_000;
@@ -19,6 +20,8 @@ const DEFAULT_PLAY_MS = 30_000;
 const DEFAULT_MAX_QUEUE = 6;
 const AUDIO_RETRY_MS = 30 * 1000;
 const TTS_MAX_CHARS = 180;
+const TTS_TEST_PHRASE = 'Test audio. Un, deux, trois.';
+const TTS_CACHE_MAX = 40;
 
 const GREETINGS = [
   'Salut gros con de {name}.',
@@ -118,7 +121,7 @@ function transcodeToPcm(mp3Path, pcmPath, timeoutMs = 20_000) {
   if (!bin) return Promise.reject(new Error('ffmpeg not found'));
   return new Promise((resolve, reject) => {
     const args = [
-      '-hide_banner', '-loglevel', 'error', '-y',
+      '-hide_banner', '-loglevel', 'error', '-threads', '1', '-y',
       '-i', mp3Path,
       '-f', 's16le', '-ar', '48000', '-ac', '2',
       pcmPath,
@@ -148,6 +151,57 @@ function transcodeToPcm(mp3Path, pcmPath, timeoutMs = 20_000) {
       reject(new Error(`ffmpeg transcode exit ${code}${err ? `: ${err.trim().slice(0, 180)}` : ''}`));
     });
   });
+}
+
+
+function cacheKey(text) {
+  return crypto.createHash('sha1').update(`s16le-48k-2:${String(text)}`).digest('hex');
+}
+
+function defaultCacheDir() {
+  if (process.env.TTS_CACHE_DIR) return process.env.TTS_CACHE_DIR;
+  if (process.env.DATA_DIR) return path.join(process.env.DATA_DIR, 'tts-cache');
+  if (fs.existsSync('/app/data')) return path.join('/app/data', 'tts-cache');
+  return path.join(os.tmpdir(), 'slayer-tts-cache');
+}
+
+function evictTtsCache(dir, maxEntries = TTS_CACHE_MAX) {
+  try {
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.pcm'));
+    if (files.length <= maxEntries) return;
+    const stats = files.map((f) => {
+      const pth = path.join(dir, f);
+      const st = fs.statSync(pth);
+      return { pth, atime: st.atimeMs || st.mtimeMs };
+    }).sort((a, b) => a.atime - b.atime);
+    for (const item of stats.slice(0, files.length - maxEntries)) {
+      try { fs.unlinkSync(item.pth); } catch { /* ignore */ }
+      try { fs.unlinkSync(item.pth.replace(/\.pcm$/, '.mp3')); } catch { /* ignore */ }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function ensureCachedPcm(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TTS_MS, cacheDir } = {}) {
+  const dir = cacheDir || defaultCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const key = cacheKey(String(text).slice(0, TTS_MAX_CHARS));
+  const mp3Path = path.join(dir, `${key}.mp3`);
+  const pcmPath = path.join(dir, `${key}.pcm`);
+  if (fs.existsSync(pcmPath) && fs.statSync(pcmPath).size > 0) {
+    try { fs.utimesSync(pcmPath, new Date(), new Date()); } catch { /* ignore */ }
+    return { pcmPath, mp3Path, cached: true, ttsMs: 0, transcodeMs: 0 };
+  }
+  const t0 = Date.now();
+  if (!(fs.existsSync(mp3Path) && fs.statSync(mp3Path).size > 64)) {
+    await ttsFn(text, mp3Path, ttsMs);
+  }
+  const ttsElapsed = Date.now() - t0;
+  const t1 = Date.now();
+  await transcodeToPcm(mp3Path, pcmPath);
+  evictTtsCache(dir);
+  return { pcmPath, mp3Path, cached: false, ttsMs: ttsElapsed, transcodeMs: Date.now() - t1 };
 }
 
 async function fetchTtsMp3(text, dest, timeoutMs = DEFAULT_TTS_MS) {
@@ -217,6 +271,8 @@ function createVoiceGreeter(opts = {}) {
   const ttsFn = opts.fetchTts || fetchTtsMp3;
   const playFn = opts.play; // optional inject for tests
   const tmpDir = opts.tmpDir || path.join(os.tmpdir(), 'slayer-tts');
+  const cacheDir = opts.cacheDir || defaultCacheDir();
+  let lastPlayStats = null;
 
   const cooldownUntil = new Map(); // userId -> ts
   const lastPhrase = new Map();
@@ -237,7 +293,12 @@ function createVoiceGreeter(opts = {}) {
 
   function markJoined(guildId, channelId) {
     if (!guildId || !channelId) return;
+    const prev = joinedAt.get(guildId);
+    // Re-asserting the same channel must not restart the 8s grace window:
+    // auto-voice resync and join debounce were silently dropping arrivals.
+    if (prev && prev.channelId === channelId) return false;
     joinedAt.set(guildId, { channelId, at: nowFn() });
+    return true;
   }
 
   function botChannel(guild) {
@@ -373,9 +434,12 @@ function createVoiceGreeter(opts = {}) {
     return p;
   }
 
-  async function playOnConnection(guildId, mp3Path) {
+  async function playOnConnection(guildId, audioPath, { pcm = false, onPlaying } = {}) {
     if (typeof playFn === 'function') {
-      return playFn(guildId, mp3Path);
+      const start = nowFn();
+      const result = await playFn(guildId, audioPath);
+      if (typeof onPlaying === 'function') onPlaying(Math.max(0, nowFn() - start));
+      return result;
     }
     const {
       getVoiceConnection, createAudioPlayer, createAudioResource,
@@ -394,11 +458,14 @@ function createVoiceGreeter(opts = {}) {
       }
     }
     if (!connection) throw new Error('no voice connection');
-    const pcmPath = `${mp3Path}.pcm`;
+    const pcmPath = pcm ? audioPath : `${audioPath}.pcm`;
+    const tempPcm = !pcm;
     try {
-      await transcodeToPcm(mp3Path, pcmPath);
+      if (!pcm) await transcodeToPcm(audioPath, pcmPath);
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-      const resource = createAudioResource(fs.createReadStream(pcmPath), {
+      // 20 ms of s16le 48 kHz stereo. Small chunks keep opusscript from
+      // blocking the event loop on a huge first read (256MB machine).
+      const resource = createAudioResource(fs.createReadStream(pcmPath, { highWaterMark: 3840 }), {
         inputType: StreamType.Raw,
         silencePaddingFrames: 5,
       });
@@ -406,13 +473,16 @@ function createVoiceGreeter(opts = {}) {
       try {
         player.play(resource);
         await entersState(player, AudioPlayerStatus.Playing, 15_000);
+        if (typeof onPlaying === 'function') onPlaying();
         await entersState(player, AudioPlayerStatus.Idle, playMs);
       } finally {
         try { player.stop(true); } catch { /* ignore */ }
         try { subscription?.unsubscribe(); } catch { /* ignore */ }
       }
     } finally {
-      try { fs.unlinkSync(pcmPath); } catch { /* ignore */ }
+      if (tempPcm) {
+        try { fs.unlinkSync(pcmPath); } catch { /* ignore */ }
+      }
     }
   }
 
@@ -424,17 +494,40 @@ function createVoiceGreeter(opts = {}) {
           const job = queue.shift();
           queuedUsers.delete(job.userId);
           const tmp = path.join(tmpDir, `greet-${job.userId}-${nowFn()}.mp3`);
+          const tStart = nowFn();
+          let startMs = null;
           try {
             fs.mkdirSync(tmpDir, { recursive: true });
             const guild = opts.getGuild ? opts.getGuild(job.guildId) : null;
             const channel = guild?.channels?.cache?.get(job.channelId);
-            if (guild && channel) {
-              const ready = await ensureAudio(guild, channel, { force: true });
-              if (!ready) throw new Error('audio not ready');
-            }
-            await ttsFn(job.text, tmp, ttsMs);
-            await playOnConnection(job.guildId, tmp);
-            log(`voice-greet played user=${job.userId} bot=${job.isBot ? 'yes' : 'no'}`);
+            const readyP = (guild && channel)
+              ? ensureAudio(guild, channel, { force: false })
+              : Promise.resolve(true);
+            // Injected play() (unit tests) still receives the mp3 path.
+            const prepareP = typeof playFn === 'function'
+              ? ttsFn(job.text, tmp, ttsMs).then(() => ({ path: tmp, pcm: false, cached: false, ttsMs: 0, transcodeMs: 0 }))
+              : ensureCachedPcm(job.text, { ttsFn, ttsMs, cacheDir }).then((r) => ({ path: r.pcmPath, pcm: true, ...r }));
+            const [ready, prepared] = await Promise.all([readyP, prepareP]);
+            if (!ready) throw new Error('audio not ready');
+            await playOnConnection(job.guildId, prepared.path, {
+              pcm: prepared.pcm,
+              onPlaying: () => {
+                startMs = nowFn() - tStart;
+                log(`voice-greet playing user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} tts_ms=${prepared.ttsMs || 0} transcode_ms=${prepared.transcodeMs || 0} cached=${prepared.cached ? 'yes' : 'no'}`);
+              },
+            });
+            if (startMs == null) startMs = nowFn() - tStart;
+            const totalMs = nowFn() - tStart;
+            cooldownUntil.set(job.userId, nowFn() + cooldownMs);
+            lastPlayStats = {
+              userId: job.userId,
+              start_ms: startMs,
+              total_ms: totalMs,
+              cached: Boolean(prepared.cached),
+              tts_ms: prepared.ttsMs || 0,
+              transcode_ms: prepared.transcodeMs || 0,
+            };
+            log(`voice-greet played user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} total_ms=${totalMs} cached=${prepared.cached ? 'yes' : 'no'}`);
           } catch (err) {
             log(`voice-greet warn: play failed user=${job.userId}: ${err.message}`);
           } finally {
@@ -456,7 +549,7 @@ function createVoiceGreeter(opts = {}) {
       if (!ctx?.guild || !ctx?.channel) return { ok: false, reason: 'bot-not-in-voice' };
       const ready = await ensureAudio(ctx.guild, ctx.channel, { force: true });
       if (!ready) return { ok: false, reason: 'audio-not-ready' };
-      const phrase = String(text || 'Test audio. Un, deux, trois.').slice(0, TTS_MAX_CHARS);
+      const phrase = String(text || TTS_TEST_PHRASE).slice(0, TTS_MAX_CHARS);
       queue.push({
         userId: 'debug-test',
         guildId: ctx.guild.id,
@@ -466,10 +559,45 @@ function createVoiceGreeter(opts = {}) {
       });
       log(`voice-greet queued user=debug-test q=${queue.length}`);
       await runQueue();
-      return { ok: true };
+      const stats = lastPlayStats && lastPlayStats.userId === 'debug-test' ? lastPlayStats : null;
+      return { ok: true, ...(stats || {}) };
     } catch (err) {
       log(`voice-greet warn: debugSpeak: ${err.message}`);
       return { ok: false, reason: 'error' };
+    }
+  }
+
+
+  async function prewarm() {
+    const t0 = Date.now();
+    const bin = findFfmpeg();
+    if (!bin) {
+      log('voice-greet warn: prewarm skipped, no ffmpeg');
+      return { ok: false, reason: 'no-ffmpeg' };
+    }
+    await new Promise((resolve) => {
+      const child = spawn(bin, [
+        '-hide_banner', '-loglevel', 'error', '-threads', '1',
+        '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '0.05',
+        '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1',
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stdout.resume();
+      const timer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        resolve();
+      }, 15_000);
+      const done = () => { clearTimeout(timer); resolve(); };
+      child.on('close', done);
+      child.on('error', done);
+    });
+    const ffmpegMs = Date.now() - t0;
+    try {
+      const r = await ensureCachedPcm(TTS_TEST_PHRASE, { ttsFn, ttsMs, cacheDir });
+      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'}`);
+      return { ok: true, ffmpeg_ms: ffmpegMs, tts_ms: r.ttsMs, transcode_ms: r.transcodeMs, cached: r.cached };
+    } catch (err) {
+      log(`voice-greet warn: prewarm: ${err.message} ffmpeg_ms=${ffmpegMs}`);
+      return { ok: false, reason: 'error', ffmpeg_ms: ffmpegMs };
     }
   }
 
@@ -499,9 +627,15 @@ function createVoiceGreeter(opts = {}) {
         cooldownUntil: cooldownUntil.get(userId) || 0,
         queueUserIds: queuedUsers,
       });
-      if (!decision.ok) return decision;
+      const relevant = oldChannelId === botChannelId || newChannelId === botChannelId;
+      if (!decision.ok) {
+        if (relevant) {
+          log(`voice-greet skip user=${userId} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} botchan=${botChannelId || 'none'} reason=${decision.reason}`);
+        }
+        return decision;
+      }
       if (!hasFfmpeg()) {
-        log(`voice-greet warn: ffmpeg missing, skipping speak (looked in ${FFMPEG_CANDIDATES.filter(Boolean).join(', ') || 'none'})`);
+        log(`voice-greet skip user=${userId} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} reason=no-ffmpeg`);
         return { ok: false, reason: 'no-ffmpeg' };
       }
       const member = newState?.member || oldState?.member || guild.members?.cache?.get(userId);
@@ -511,10 +645,10 @@ function createVoiceGreeter(opts = {}) {
       const picked = pickPhrase(name, lastPhrase.get(userId));
       lastPhrase.set(userId, picked.index);
       if (queue.length >= maxQueue) {
-        log(`voice-greet skip user=${userId} reason=queue-full`);
+        log(`voice-greet skip user=${userId} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} reason=queue-full`);
         return { ok: false, reason: 'queue-full' };
       }
-      cooldownUntil.set(userId, now + cooldownMs);
+      // Cooldown is armed only after a successful play, not when we merely queue.
       queuedUsers.add(userId);
       queue.push({
         userId,
@@ -523,7 +657,7 @@ function createVoiceGreeter(opts = {}) {
         text: picked.text,
         isBot: Boolean(user?.bot || member?.user?.bot),
       });
-      log(`voice-greet queued user=${userId} bot=${user?.bot ? 'yes' : 'no'} q=${queue.length}`);
+      log(`voice-greet queued user=${userId} bot=${user?.bot ? 'yes' : 'no'} q=${queue.length} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} from_move=${oldChannelId && oldChannelId !== newChannelId ? 'yes' : 'no'}`);
       setTimeout(() => { runQueue().catch((err) => log(`voice-greet warn: queue: ${err.message}`)); }, 0).unref?.();
       return { ok: true, text: picked.text, name };
     } catch (err) {
@@ -542,6 +676,7 @@ function createVoiceGreeter(opts = {}) {
     ensureAudio,
     handleVoiceStateUpdate,
     debugSpeak,
+    prewarm,
     // test helpers
     _queue: queue,
     _cooldownUntil: cooldownUntil,
@@ -561,6 +696,8 @@ module.exports = {
   hasFfmpeg,
   findFfmpeg,
   transcodeToPcm,
+  ensureCachedPcm,
+  TTS_TEST_PHRASE,
   flagOn,
   createVoiceGreeter,
 };

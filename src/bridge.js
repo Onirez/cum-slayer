@@ -1114,6 +1114,11 @@ function onReady(c) {
   } catch (err) {
     log(`auto-voice ready error: ${err.message}`);
   }
+  if (VOICE_GREET) {
+    Promise.resolve(voiceGreeter.prewarm()).catch((err) => {
+      log(`voice-greet warn: prewarm: ${err.message}`);
+    });
+  }
   try {
     applyDailyPresence('ready');
   } catch (err) {
@@ -1195,10 +1200,9 @@ client.on('shardResume', (id) => {
 });
 
 client.on('voiceStateUpdate', (oldState, newState) => {
-  if (!AUTO_VOICE) return;
   const guildId = newState.guild?.id || oldState.guild?.id;
   if (!guildId || !allowedGuilds.has(guildId)) return;
-  scheduleAutoVoice('voiceStateUpdate');
+  if (AUTO_VOICE) scheduleAutoVoice('voiceStateUpdate');
   if (VOICE_GREET) {
     try { voiceGreeter.handleVoiceStateUpdate(oldState, newState); } catch (err) {
       log(`voice-greet warn: ${err.message}`);
