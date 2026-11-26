@@ -3,7 +3,7 @@
 FROM node:24-bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tini gosu util-linux \
+    && apt-get install -y --no-install-recommends ca-certificates tini gosu util-linux ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -9,7 +9,9 @@ Quand `AUTO_VOICE=on` (défaut), le pont surveille les salons vocaux et les scè
 - Il part dès qu’il n’y a plus d’humain en vocal. Si la passerelle ignore le leave, un repli REST déconnecte le bot lui-même.
 - Un debounce évite de sauter de salon en salon à chaque join/leave trop rapide.
 
-L’implémentation utilise l’opcode gateway 4 (état vocal) plutôt qu’un flux audio `@discordjs/voice` : le bot est « présent », il n’envoie pas de son.
+Quand quelqu’un (humain **ou bot**) rejoint le salon où le bot est déjà connecté, le bot le salue à voix haute. Les phrases sont préécrites (français, style trash), le prénom est le nom d’affichage nettoyé pour la prononciation, et la voix vient d’un TTS gratuit sans clé (endpoint Translate). Pas d’appel au modèle. Cooldown d’environ 10 minutes par personne (une déco/reco ne relance pas le salut). Si plusieurs personnes arrivent en même temps, les saluts sont mis en file, un par un. Quand le bot rejoint lui-même un salon, il ne salue pas ceux qui sont déjà là (courte période de grâce). Il ne se salue jamais lui-même.
+
+Le flux audio passe par `@discordjs/voice` + ffmpeg + opusscript, déjà prévus. La connexion vocale a un délai d’abandon court ; si elle échoue, le bot reste simplement présent dans le salon (opcode 4) et le salut est sauté, sans faire planter le pont. `VOICE_GREET=off` désactive uniquement les saluts.
 
 ## Présence / statut
 

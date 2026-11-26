@@ -26,6 +26,9 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | `BOT_ALIASES` | `cûm slayer,cum slayer,slayer` | Surnoms, AGENTS uniquement |
 | `ALLOW_DMS` | `1` | Accepter les DM de quiconque écrit au bot (pas seulement les membres) |
 | `AUTO_VOICE` | `on` | Rejoindre le vocal le plus rempli |
+| `VOICE_GREET` | `on` | Saluer à voix haute ceux qui rejoignent le salon du bot |
+| `VOICE_GREET_COOLDOWN_MS` | `600000` | Cooldown entre deux saluts d’une même personne (~10 min) |
+| `VOICE_GREET_GRACE_MS` | `8000` | Ne pas saluer juste après que le bot ait lui-même rejoint |
 | `DAILY_ROAST` | `on` | Activer le roast du jour |
 
 ## Limites

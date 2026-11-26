@@ -7,10 +7,10 @@
  */
 
 const { Client, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
-// Voice presence is done with raw gateway op 4 only (no @discordjs/voice):
-// the voice websocket cannot complete TLS from this box, and the library's
-// endless signalling/connecting retry loop was the prime suspect of the
-// 22:21 hang. Being "in" the channel only needs the gateway voice state.
+// Voice presence used to be raw gateway op 4 only (no @discordjs/voice),
+// because a TLS hang on the dev box plus the library's retry loop were
+// suspected in a past freeze. Greetings now use @discordjs/voice, with a
+// short connect timeout and a silent op-4 fallback if audio cannot start.
 const fs = require('fs');
 const path = require('path');
 // Discord Agent Rules (AGENTS.md): scope, explicit mentions, DM interactions.
@@ -24,6 +24,7 @@ const slash = require('./slash');
 const lifetime = require('./lifetime');
 const statsRender = require('./stats_render');
 const followMod = require('./follow');
+const voiceGreet = require('./voice_greet');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
 const followSessions = new followMod.FollowSessions({
@@ -77,6 +78,9 @@ const ALLOW_DMS = config.ALLOW_DMS;
 const AUTO_VOICE = config.AUTO_VOICE;
 const AUTO_VOICE_DEBOUNCE_MS = config.AUTO_VOICE_DEBOUNCE_MS;
 const AUTO_VOICE_RESYNC_MS = config.AUTO_VOICE_RESYNC_MS;
+const VOICE_GREET = config.VOICE_GREET;
+const VOICE_GREET_COOLDOWN_MS = config.VOICE_GREET_COOLDOWN_MS;
+const VOICE_GREET_GRACE_MS = config.VOICE_GREET_GRACE_MS;
 const VOICE_CHANNEL_TYPE = 2;
 const STAGE_CHANNEL_TYPE = 13;
 const VOICE_TYPES = new Set([VOICE_CHANNEL_TYPE, STAGE_CHANNEL_TYPE]);
@@ -587,6 +591,15 @@ function sendVoiceStateUpdate(guild, channelId) {
   });
 }
 
+const voiceGreeter = voiceGreet.createVoiceGreeter({
+  enabled: VOICE_GREET,
+  cooldownMs: VOICE_GREET_COOLDOWN_MS,
+  graceMs: VOICE_GREET_GRACE_MS,
+  log,
+  getBotId: () => client.user?.id || null,
+  sendVoiceStateUpdate,
+});
+
 function botVoiceChannelId(guild) {
   const botId = client.user?.id;
   if (!botId) return null;
@@ -655,14 +668,27 @@ function pickTargetChannel(guild) {
 const autoVoiceLastSent = new Map(); // guildId -> { channelId, at }
 
 function joinOrMoveVoice(guild, channel) {
-  sendVoiceStateUpdate(guild, channel.id);
   autoVoiceLastSent.set(guild.id, { channelId: channel.id, at: Date.now() });
+  if (VOICE_GREET) {
+    voiceGreeter.markJoined(guild.id, channel.id);
+    Promise.resolve(voiceGreeter.ensureAudio(guild, channel)).catch((err) => {
+      log(`voice-greet warn: ensureAudio: ${err.message}`);
+      try { sendVoiceStateUpdate(guild, channel.id); } catch (e) {
+        log(`auto-voice warn: op4 fallback failed: ${e.message}`);
+      }
+    });
+    return;
+  }
+  sendVoiceStateUpdate(guild, channel.id);
 }
 
 const voiceLeaveFallbackAt = new Map(); // guildId -> ts of last REST fallback
 
 function leaveVoice(guild) {
   autoVoiceAsserted.delete(guild.id);
+  try { voiceGreeter.leave(guild.id); } catch (err) {
+    log(`voice-greet warn: leave: ${err.message}`);
+  }
   try {
     sendVoiceStateUpdate(guild, null);
     autoVoiceLastSent.set(guild.id, { channelId: null, at: Date.now() });
@@ -730,7 +756,14 @@ function syncAutoVoiceGuild(guild, reason) {
     // state. After a restart the cache can still show the old voice state,
     // and skipping the join would leave the bot silent once that expires.
     if (gatewayThere && alreadyAsserted) {
-      if (vs && (vs.selfMute === true || vs.selfDeaf === false)) {
+      if (VOICE_GREET) {
+        const ch = guild.channels.cache.get(targetId);
+        if (ch) {
+          Promise.resolve(voiceGreeter.ensureAudio(guild, ch)).catch((err) => {
+            log(`voice-greet warn: re-ensureAudio: ${err.message}`);
+          });
+        }
+      } else if (vs && (vs.selfMute === true || vs.selfDeaf === false)) {
         log(`auto-voice re-assert mute state (mic on, deaf)  guild=${guild.id} channel=${targetId} reason=${reason}`);
         try { sendVoiceStateUpdate(guild, targetId); } catch (err) {
           log(`auto-voice warn: remute failed: ${err.message}`);
@@ -1061,7 +1094,7 @@ function onReady(c) {
     .map((g) => `${g.name}(${g.id})`)
     .join(', ') || '(none)';
   log(
-    `ready logged in as ${user.tag} id=${user.id} app=${BOT_APP_ID} guilds=[${guildList}] allowed=[${[...allowedGuilds].join(',')}] dms=${ALLOW_DMS ? 'on' : 'off'} agents_category=${AGENTS_CATEGORY_ID} agents_channels=[${agentsChannelSummary(c)}] plans=buttons daily_roast=${ROAST_ENABLED ? 'on' : 'off'} aliases=[${botAliases.join(', ')}] webhook=${webhookConfigured() ? 'configured' : 'missing'} voice=${AUTO_VOICE ? 'on' : 'off'}`,
+    `ready logged in as ${user.tag} id=${user.id} app=${BOT_APP_ID} guilds=[${guildList}] allowed=[${[...allowedGuilds].join(',')}] dms=${ALLOW_DMS ? 'on' : 'off'} agents_category=${AGENTS_CATEGORY_ID} agents_channels=[${agentsChannelSummary(c)}] plans=buttons daily_roast=${ROAST_ENABLED ? 'on' : 'off'} aliases=[${botAliases.join(', ')}] webhook=${webhookConfigured() ? 'configured' : 'missing'} voice=${AUTO_VOICE ? 'on' : 'off'} greet=${VOICE_GREET ? 'on' : 'off'}`,
   );
   startAutoVoiceResync();
   try {
@@ -1154,6 +1187,11 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   const guildId = newState.guild?.id || oldState.guild?.id;
   if (!guildId || !allowedGuilds.has(guildId)) return;
   scheduleAutoVoice('voiceStateUpdate');
+  if (VOICE_GREET) {
+    try { voiceGreeter.handleVoiceStateUpdate(oldState, newState); } catch (err) {
+      log(`voice-greet warn: ${err.message}`);
+    }
+  }
 });
 
 
@@ -1808,6 +1846,7 @@ function forceRestart(reason) {
   log(`watchdog: forcing restart (${reason})`);
   try { stopAllTypingLoops(); } catch { /* ignore */ }
   try { stopAutoVoice(); } catch { /* ignore */ }
+  try { voiceGreeter.shutdown(); } catch { /* ignore */ }
   try { stopPresenceRotation(); } catch { /* ignore */ }
   const exitNow = () => process.exit(1);
   try {
@@ -1898,6 +1937,7 @@ process.on('SIGINT', () => {
   try { lifetime.flush(); } catch { /* ignore */ }
   stopAllTypingLoops();
   stopAutoVoice();
+  try { voiceGreeter.shutdown(); } catch { /* ignore */ }
   stopPresenceRotation();
   client.destroy();
   process.exit(0);
@@ -1908,6 +1948,7 @@ process.on('SIGTERM', () => {
   try { lifetime.flush(); } catch { /* ignore */ }
   stopAllTypingLoops();
   stopAutoVoice();
+  try { voiceGreeter.shutdown(); } catch { /* ignore */ }
   stopPresenceRotation();
   client.destroy();
   process.exit(0);
