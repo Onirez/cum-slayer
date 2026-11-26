@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else ".")
-from img_fetch import resize_to_jpeg, preview_url, is_allowed_url
+from img_fetch import resize_to_jpeg, preview_url, is_allowed_url, format_ready, Fetched
 from PIL import Image
 
 assert is_allowed_url("https://cdn.discordapp.com/attachments/1/2/a.png")
@@ -20,3 +20,10 @@ im = Image.open(dest)
 assert im.size == (1024, 768), im.size
 assert dest.stat().st_size < src.stat().st_size
 print("resize-ok", *im.size, dest.stat().st_size)
+block = format_ready([Fetched(dest, False, 12, 1024, 768, dest.stat().st_size)])
+assert str(dest) in block
+assert "width=1024 height=768" in block
+assert "cache=miss" in block
+assert "Read this file once, then call remote-act.sh immediately" in block
+assert "http" not in block.lower()
+print("ready-ok")

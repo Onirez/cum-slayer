@@ -44,9 +44,33 @@ if [[ "$TOOL" == "act" ]] || [[ ! -t 0 ]]; then
 fi
 
 _RT_ARGS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[2:]))' x "$@")"
-export _RT_URL="$URL" _RT_TOOL="$TOOL" _RT_DRY="$DRY" _RT_STDIN_FILE="${_stdin_file}" _RT_ARGS_JSON
+export _RT_URL="$URL" _RT_TOOL="$TOOL" _RT_DRY="$DRY" _RT_STDIN_FILE="${_stdin_file}" _RT_ARGS_JSON _RT_HERE="$_HERE"
 python3 - << 'PY'
-import json, os, sys, urllib.request, urllib.error
+import json, os, sys, time, urllib.request, urllib.error
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+def _log_timing(tool, dry, body_len, elapsed_ms, status, err_name=""):
+    # Duration only: no URL, no secret, no body.
+    roots = []
+    here = Path(os.environ.get("_RT_HERE") or ".").resolve()
+    roots.append(here.parent.parent / "data")  # deploy/fly -> repo root
+    roots.append(Path("/workspace/discord-bridge/data"))
+    now = datetime.now(timezone(timedelta(hours=1))).isoformat(timespec="milliseconds")
+    line = (
+        f"{now} tool={tool} dry={int(bool(dry))} bytes={body_len} "
+        f"elapsed_ms={elapsed_ms} status={status}"
+        + (f" err={err_name}" if err_name else "")
+        + "\n"
+    )
+    for d in roots:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            with (d / "tool-timings.log").open("a", encoding="utf-8") as f:
+                f.write(line)
+                return
+        except OSError:
+            continue
 
 url = os.environ["_RT_URL"].rstrip("/")
 secret = os.environ["ACT_SHARED_SECRET"]
@@ -70,6 +94,10 @@ req = urllib.request.Request(
     headers={"Content-Type": "application/json", "Authorization": "Bearer " + secret},
     method="POST",
 )
+t0 = time.monotonic()
+status = 0
+raw = b""
+err_name = ""
 try:
     with urllib.request.urlopen(req, timeout=120) as resp:
         raw = resp.read()
@@ -78,8 +106,13 @@ except urllib.error.HTTPError as e:
     raw = e.read() or b""
     status = e.code
 except Exception as e:
+    err_name = type(e).__name__
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    _log_timing(tool, dry, len(body), elapsed_ms, 0, err_name)
     print(f"error: remote {tool} failed: {e}", file=sys.stderr)
     sys.exit(1)
+elapsed_ms = int((time.monotonic() - t0) * 1000)
+_log_timing(tool, dry, len(body), elapsed_ms, status, err_name)
 
 try:
     data = json.loads(raw.decode("utf-8"))

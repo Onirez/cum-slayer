@@ -3,6 +3,9 @@
 
 Never prints URLs or query tokens. Allowed hosts only.
 Usage: img_fetch.py [--all] [--max 1024] <url> [url...]
+
+Stdout is Read-ready: each local path on its own line, then one short
+"next step" line so the caller can Read once and reply immediately.
 """
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
@@ -204,24 +209,81 @@ def resize_to_jpeg(src: Path, dest: Path, max_edge: int) -> None:
                     pass
 
 
-def fetch_one(url: str, cache: Path, max_edge: int, timeout: int) -> Path:
-    if not is_allowed_url(url):
-        raise ImgError("error: only https URLs on cdn.discordapp.com or media.discordapp.net are allowed")
-    dest = cache / cache_key(url, max_edge)
-    if dest.is_file() and dest.stat().st_size > 0:
-        return dest
-    raw = cache / f"{hashlib.sha256(url.encode('utf-8')).hexdigest()}.src"
-    preview = preview_url(url, max_edge)
+@dataclass
+class Fetched:
+    path: Path
+    cache_hit: bool
+    elapsed_ms: int
+    width: int = 0
+    height: int = 0
+    size: int = 0
+
+
+def image_info(path: Path) -> tuple[int, int, int]:
+    size = path.stat().st_size if path.is_file() else 0
+    width = height = 0
     try:
-        download(preview, raw, timeout)
-    except ImgError:
-        download(url, raw, timeout)
-    resize_to_jpeg(raw, dest, max_edge)
+        from PIL import Image
+        with Image.open(path) as im:
+            width, height = im.size
+    except Exception:
+        pass
+    return width, height, size
+
+
+def format_ready(items: list[Fetched]) -> str:
+    """Stdout block: paths first (one per line), then a single next-step line."""
+    lines: list[str] = []
+    for it in items:
+        lines.append(str(it.path))
+        lines.append(
+            f"width={it.width} height={it.height} bytes={it.size} "
+            f"cache={'hit' if it.cache_hit else 'miss'} elapsed_ms={it.elapsed_ms}"
+        )
+    n = len(items)
+    if n == 1:
+        lines.append("Read this file once, then call remote-act.sh immediately. No other tool in between.")
+    else:
+        lines.append("Read each path once (2 max), then call remote-act.sh immediately. No other tool in between.")
+    return "\n".join(lines) + "\n"
+
+
+def append_timing(cache: Path, items: list[Fetched]) -> None:
+    log = cache / "timings.log"
+    now = datetime.now(timezone(timedelta(hours=1))).isoformat(timespec="milliseconds")
     try:
-        raw.unlink()
+        with log.open("a", encoding="utf-8") as f:
+            for it in items:
+                f.write(
+                    f"{now} img cache={'hit' if it.cache_hit else 'miss'} "
+                    f"file={it.path.name} width={it.width} height={it.height} "
+                    f"bytes={it.size} elapsed_ms={it.elapsed_ms}\n"
+                )
     except OSError:
         pass
-    return dest
+
+
+def fetch_one(url: str, cache: Path, max_edge: int, timeout: int) -> Fetched:
+    if not is_allowed_url(url):
+        raise ImgError("error: only https URLs on cdn.discordapp.com or media.discordapp.net are allowed")
+    t0 = time.monotonic()
+    dest = cache / cache_key(url, max_edge)
+    hit = dest.is_file() and dest.stat().st_size > 0
+    if not hit:
+        raw = cache / f"{hashlib.sha256(url.encode('utf-8')).hexdigest()}.src"
+        preview = preview_url(url, max_edge)
+        try:
+            download(preview, raw, timeout)
+        except ImgError:
+            download(url, raw, timeout)
+        resize_to_jpeg(raw, dest, max_edge)
+        try:
+            raw.unlink()
+        except OSError:
+            pass
+    width, height, size = image_info(dest)
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    return Fetched(dest, hit, elapsed_ms, width, height, size)
 
 
 def parse_args(argv: list[str]) -> tuple[list[str], int, bool]:
@@ -276,14 +338,15 @@ def main() -> None:
     maybe_gc(cache)
     if len(urls) == 1:
         try:
-            path = fetch_one(urls[0], cache, max_edge, timeout)
+            item = fetch_one(urls[0], cache, max_edge, timeout)
         except ImgError as e:
             print(str(e), file=sys.stderr)
             raise SystemExit(e.code)
-        print(path)
+        sys.stdout.write(format_ready([item]))
+        append_timing(cache, [item])
         return
     # Parallel fetch. Print paths in the same order as the URLs. Never print URLs.
-    results: dict[int, Path | ImgError] = {}
+    results: dict[int, Fetched | ImgError] = {}
     workers = min(4, len(urls))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(fetch_one, url, cache, max_edge, timeout): i for i, url in enumerate(urls)}
@@ -294,6 +357,7 @@ def main() -> None:
             except ImgError as e:
                 results[i] = e
     failed = 0
+    items: list[Fetched] = []
     for i in range(len(urls)):
         r = results.get(i)
         if isinstance(r, ImgError):
@@ -303,7 +367,10 @@ def main() -> None:
             print("error: download failed", file=sys.stderr)
             failed += 1
         else:
-            print(r)
+            items.append(r)
+    if items:
+        sys.stdout.write(format_ready(items))
+        append_timing(cache, items)
     if failed:
         raise SystemExit(1)
 
