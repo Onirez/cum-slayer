@@ -4,8 +4,9 @@
  * Voice greetings when someone (human or bot) arrives in a voice channel:
  * a fresh join, or a move from another voice channel. If the bot is not
  * already in the destination, it joins to speak, then auto-voice may
- * move it back. Pre-written French lines + Google Translate TTS (no API
- * key). Failures are logged and swallowed: they must never crash the bridge.
+ * move it back. Pre-written French lines + Microsoft Edge neural TTS
+ * (deep French male voice, no API key), with Google Translate TTS as
+ * fallback. Failures are logged and swallowed: they must never crash the bridge.
  */
 
 const fs = require('fs');
@@ -13,11 +14,13 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const edgeTts = require('./edge_tts');
 
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_GRACE_MS = 8_000;
 const DEFAULT_CONNECT_MS = 20_000;
-const DEFAULT_TTS_MS = 8_000;
+const DEFAULT_TTS_MS = 12_000;
+const DEFAULT_GOOGLE_TTS_MS = 8_000;
 const DEFAULT_PLAY_MS = 30_000;
 const DEFAULT_MAX_QUEUE = 6;
 const AUDIO_RETRY_MS = 30 * 1000;
@@ -156,8 +159,8 @@ function transcodeToPcm(mp3Path, pcmPath, timeoutMs = 20_000) {
 }
 
 
-function cacheKey(text) {
-  return crypto.createHash('sha1').update(`s16le-48k-2:${String(text)}`).digest('hex');
+function cacheKey(text, tag = edgeTts.cacheVoiceTag()) {
+  return crypto.createHash('sha1').update(`s16le-48k-2:${tag}:${String(text)}`).digest('hex');
 }
 
 function defaultCacheDir() {
@@ -185,28 +188,32 @@ function evictTtsCache(dir, maxEntries = TTS_CACHE_MAX) {
   }
 }
 
-async function ensureCachedPcm(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TTS_MS, cacheDir } = {}) {
+async function ensureCachedPcm(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TTS_MS, cacheDir, voiceTag } = {}) {
   const dir = cacheDir || defaultCacheDir();
   fs.mkdirSync(dir, { recursive: true });
-  const key = cacheKey(String(text).slice(0, TTS_MAX_CHARS));
+  const clipped = String(text).slice(0, TTS_MAX_CHARS);
+  const tag = voiceTag || edgeTts.cacheVoiceTag();
+  const key = cacheKey(clipped, tag);
   const mp3Path = path.join(dir, `${key}.mp3`);
   const pcmPath = path.join(dir, `${key}.pcm`);
   if (fs.existsSync(pcmPath) && fs.statSync(pcmPath).size > 0) {
     try { fs.utimesSync(pcmPath, new Date(), new Date()); } catch { /* ignore */ }
-    return { pcmPath, mp3Path, cached: true, ttsMs: 0, transcodeMs: 0 };
+    return { pcmPath, mp3Path, cached: true, ttsMs: 0, transcodeMs: 0, engine: tag.split(':')[0] };
   }
   const t0 = Date.now();
+  let engine = tag.split(':')[0] || 'edge';
   if (!(fs.existsSync(mp3Path) && fs.statSync(mp3Path).size > 64)) {
-    await ttsFn(text, mp3Path, ttsMs);
+    const result = await ttsFn(clipped, mp3Path, ttsMs);
+    if (result && typeof result === 'object' && result.engine) engine = result.engine;
   }
   const ttsElapsed = Date.now() - t0;
   const t1 = Date.now();
   await transcodeToPcm(mp3Path, pcmPath);
   evictTtsCache(dir);
-  return { pcmPath, mp3Path, cached: false, ttsMs: ttsElapsed, transcodeMs: Date.now() - t1 };
+  return { pcmPath, mp3Path, cached: false, ttsMs: ttsElapsed, transcodeMs: Date.now() - t1, engine };
 }
 
-async function fetchTtsMp3(text, dest, timeoutMs = DEFAULT_TTS_MS) {
+async function fetchGoogleTtsMp3(text, dest, timeoutMs = DEFAULT_GOOGLE_TTS_MS) {
   const clipped = String(text).slice(0, TTS_MAX_CHARS);
   const q = encodeURIComponent(clipped);
   let lastErr = new Error('no tts endpoint');
@@ -239,6 +246,30 @@ async function fetchTtsMp3(text, dest, timeoutMs = DEFAULT_TTS_MS) {
     }
   }
   throw lastErr;
+}
+
+function ttsEngineForced() {
+  const raw = String(process.env.TTS_ENGINE || 'edge').trim().toLowerCase();
+  if (['google', 'gtts', 'translate'].includes(raw)) return 'google';
+  if (['0', 'false', 'off', 'no'].includes(raw)) return 'google';
+  return 'edge';
+}
+
+async function fetchTtsMp3(text, dest, timeoutMs = DEFAULT_TTS_MS, { log } = {}) {
+  const clipped = String(text).slice(0, TTS_MAX_CHARS);
+  const preferGoogle = ttsEngineForced() === 'google';
+  if (!preferGoogle) {
+    try {
+      await edgeTts.fetchEdgeTtsMp3(clipped, dest, timeoutMs);
+      return { dest, engine: 'edge' };
+    } catch (err) {
+      if (typeof log === 'function') {
+        log(`voice-greet warn: edge tts failed (${err.message}); falling back to google`);
+      }
+    }
+  }
+  await fetchGoogleTtsMp3(clipped, dest, Math.min(timeoutMs, DEFAULT_GOOGLE_TTS_MS));
+  return { dest, engine: 'google' };
 }
 
 function cooldownKey(userId, channelId) {
@@ -275,7 +306,7 @@ function createVoiceGreeter(opts = {}) {
   const maxQueue = Number(opts.maxQueue || DEFAULT_MAX_QUEUE);
   const sendVoiceStateUpdate = opts.sendVoiceStateUpdate || (() => {});
   const nowFn = opts.now || (() => Date.now());
-  const ttsFn = opts.fetchTts || fetchTtsMp3;
+  const ttsFn = opts.fetchTts || ((text, dest, ms) => fetchTtsMp3(text, dest, ms, { log }));
   const playFn = opts.play; // optional inject for tests
   const tmpDir = opts.tmpDir || path.join(os.tmpdir(), 'slayer-tts');
   const cacheDir = opts.cacheDir || defaultCacheDir();
@@ -522,7 +553,7 @@ function createVoiceGreeter(opts = {}) {
               pcm: prepared.pcm,
               onPlaying: () => {
                 startMs = nowFn() - tStart;
-                log(`voice-greet playing user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} tts_ms=${prepared.ttsMs || 0} transcode_ms=${prepared.transcodeMs || 0} cached=${prepared.cached ? 'yes' : 'no'}`);
+                log(`voice-greet playing user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} tts_ms=${prepared.ttsMs || 0} transcode_ms=${prepared.transcodeMs || 0} cached=${prepared.cached ? 'yes' : 'no'} engine=${prepared.engine || 'n/a'}`);
               },
             });
             if (startMs == null) startMs = nowFn() - tStart;
@@ -606,7 +637,8 @@ function createVoiceGreeter(opts = {}) {
     const ffmpegMs = Date.now() - t0;
     try {
       const r = await ensureCachedPcm(TTS_TEST_PHRASE, { ttsFn, ttsMs, cacheDir });
-      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'}`);
+      const vs = edgeTts.voiceSettings();
+      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'} engine=${r.engine || 'edge'} voice=${vs.voice} pitch=${vs.pitch} rate=${vs.rate}`);
       return { ok: true, ffmpeg_ms: ffmpegMs, tts_ms: r.ttsMs, transcode_ms: r.transcodeMs, cached: r.cached };
     } catch (err) {
       log(`voice-greet warn: prewarm: ${err.message} ffmpeg_ms=${ffmpegMs}`);
@@ -726,6 +758,9 @@ module.exports = {
   shouldGreet,
   cooldownKey,
   fetchTtsMp3,
+  fetchGoogleTtsMp3,
+  cacheKey,
+  ttsEngineForced,
   hasFfmpeg,
   findFfmpeg,
   transcodeToPcm,

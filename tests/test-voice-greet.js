@@ -3,6 +3,7 @@
 const { EventEmitter } = require('events');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const assert = require('assert');
 
 const root = fs.existsSync(path.join(__dirname, '..', 'voice_greet.js'))
@@ -81,6 +82,22 @@ ok(vg.cooldownKey('u1', 'vc2') === 'u1:vc2', 'cooldown key is per user per chann
 
 ok(typeof vg.findFfmpeg === 'function', 'findFfmpeg is exported');
 ok(vg.hasFfmpeg() === Boolean(vg.findFfmpeg()), 'hasFfmpeg is existsSync, not a short spawn');
+
+const edge = require(path.join(root, 'edge_tts.js'));
+ok(edge.DEFAULT_VOICE === 'fr-FR-RemyMultilingualNeural', 'default voice is Remy (deeper French male)');
+ok(edge.DEFAULT_PITCH === '-15%', 'default pitch is lowered 15%');
+ok(edge.DEFAULT_RATE === '+10%', 'default rate is slightly faster');
+ok(
+  edge.secMsGecFromUnixSeconds(1791888000) === '492D7694A183A45E-56E821F95D4579C5B7C7E33DC7303FF379EC36D510213555BBBB9EB17EF15876',
+  'Sec-MS-GEC v2 matches the known test vector',
+);
+ok(edge.escapeSsml(`<a & '"`) === '&lt;a &amp; &apos;&quot;', 'SSML special chars are escaped');
+ok(vg.cacheKey('Salut {name}.', 'edge:fr-FR-HenriNeural:-15%:+10%')
+  !== vg.cacheKey('Salut {name}.', 'edge:fr-FR-RemyMultilingualNeural:-15%:+10%'),
+  'cache key changes with the voice');
+ok(vg.cacheKey('Salut {name}.', edge.cacheVoiceTag())
+  !== crypto.createHash('sha1').update('s16le-48k-2:Salut {name}.').digest('hex'),
+  'new cache keys do not reuse old Google-only audio');
 
 
 // greeter wiring with fake TTS/play
