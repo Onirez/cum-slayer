@@ -9,15 +9,15 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_GRACE_MS = 8_000;
-const DEFAULT_CONNECT_MS = 8_000;
+const DEFAULT_CONNECT_MS = 20_000;
 const DEFAULT_TTS_MS = 8_000;
 const DEFAULT_PLAY_MS = 30_000;
 const DEFAULT_MAX_QUEUE = 6;
-const AUDIO_RETRY_MS = 2 * 60 * 1000;
+const AUDIO_RETRY_MS = 30 * 1000;
 const TTS_MAX_CHARS = 180;
 
 const GREETINGS = [
@@ -85,12 +85,69 @@ function pickPhrase(name, lastIndex) {
   return { text: fillPhrase(GREETINGS[i], name), index: i };
 }
 
-function hasFfmpeg() {
-  try {
-    return spawnSync('ffmpeg', ['-version'], { encoding: 'utf8', timeout: 4000 }).status === 0;
-  } catch {
-    return false;
+const FFMPEG_CANDIDATES = [
+  process.env.FFMPEG_PATH,
+  '/usr/bin/ffmpeg',
+  '/usr/local/bin/ffmpeg',
+];
+
+function findFfmpeg() {
+  for (const candidate of FFMPEG_CANDIDATES) {
+    if (candidate && fs.existsSync(candidate)) return candidate;
   }
+  try {
+    const fromStatic = require('ffmpeg-static');
+    if (fromStatic && fs.existsSync(fromStatic)) return fromStatic;
+  } catch {
+    /* optional */
+  }
+  return null;
+}
+
+function hasFfmpeg() {
+  // Do not spawn `ffmpeg -version`: on the 256MB Fly machine that call
+  // often hits a 4s spawnSync timeout (ETIMEDOUT) even when the binary
+  // is present, and a cached false would skip every greeting.
+  const bin = findFfmpeg();
+  if (bin && process.env.FFMPEG_PATH !== bin) process.env.FFMPEG_PATH = bin;
+  return Boolean(bin);
+}
+
+function transcodeToPcm(mp3Path, pcmPath, timeoutMs = 20_000) {
+  const bin = findFfmpeg();
+  if (!bin) return Promise.reject(new Error('ffmpeg not found'));
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', mp3Path,
+      '-f', 's16le', '-ar', '48000', '-ac', '2',
+      pcmPath,
+    ];
+    const child = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      reject(new Error('ffmpeg transcode timeout'));
+    }, timeoutMs);
+    child.stderr.on('data', (d) => {
+      err += d;
+      if (err.length > 2000) err = err.slice(-2000);
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      try {
+        if (code === 0 && fs.existsSync(pcmPath) && fs.statSync(pcmPath).size > 0) {
+          resolve(pcmPath);
+          return;
+        }
+      } catch { /* fall through */ }
+      reject(new Error(`ffmpeg transcode exit ${code}${err ? `: ${err.trim().slice(0, 180)}` : ''}`));
+    });
+  });
 }
 
 async function fetchTtsMp3(text, dest, timeoutMs = DEFAULT_TTS_MS) {
@@ -168,9 +225,9 @@ function createVoiceGreeter(opts = {}) {
   const connecting = new Map(); // guildId -> Promise<boolean>
   const queue = [];
   const queuedUsers = new Set();
-  let running = false;
-  let ffmpegOk = null;
+  let runPromise = null;
   let voiceLib = null;
+  hasFfmpeg();
 
   function loadVoiceLib() {
     if (voiceLib) return voiceLib;
@@ -230,9 +287,9 @@ function createVoiceGreeter(opts = {}) {
     });
   }
 
-  async function ensureAudioInner(guild, channel) {
+  async function ensureAudioInner(guild, channel, force = false) {
     if (!enabled || !guild || !channel) {
-      sendVoiceStateUpdate(guild, channel?.id ?? null);
+      if (guild) sendVoiceStateUpdate(guild, channel?.id ?? null);
       return false;
     }
     if (channel.type !== 2) {
@@ -241,54 +298,75 @@ function createVoiceGreeter(opts = {}) {
     }
     markJoined(guild.id, channel.id);
     const until = audioFailedUntil.get(guild.id) || 0;
-    if (nowFn() < until) {
+    if (!force && nowFn() < until) {
       sendVoiceStateUpdate(guild, channel.id);
       return false;
     }
-    try {
-      const {
-        joinVoiceChannel, entersState, VoiceConnectionStatus, getVoiceConnection,
-      } = loadVoiceLib();
-      const existing = getVoiceConnection(guild.id);
-      if (existing && sameChannel(existing, channel.id)) {
-        const st = existing.state.status;
-        if (st === VoiceConnectionStatus.Ready) return true;
-        if (st === VoiceConnectionStatus.Signalling || st === VoiceConnectionStatus.Connecting) {
-          await entersState(existing, VoiceConnectionStatus.Ready, connectMs);
-          log(`voice-greet audio ready guild=${guild.id} channel=${channel.id}`);
-          return true;
+    const {
+      joinVoiceChannel, entersState, VoiceConnectionStatus, getVoiceConnection,
+    } = loadVoiceLib();
+
+    async function waitReady(connection, label) {
+      if (connection.state.status === VoiceConnectionStatus.Ready) return connection;
+      await entersState(connection, VoiceConnectionStatus.Ready, connectMs);
+      log(`voice-greet audio ready guild=${guild.id} channel=${channel.id} via=${label}`);
+      return connection;
+    }
+
+    let lastErr = new Error('audio join failed');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const existing = getVoiceConnection(guild.id);
+        if (existing && sameChannel(existing, channel.id)) {
+          const st = existing.state.status;
+          if (st === VoiceConnectionStatus.Ready) return true;
+          if (st === VoiceConnectionStatus.Signalling || st === VoiceConnectionStatus.Connecting) {
+            await waitReady(existing, `wait-${attempt}`);
+            return true;
+          }
+        }
+        if (existing) {
+          try { existing.destroy(); } catch { /* ignore */ }
+        }
+        const connection = joinVoiceChannel({
+          channelId: channel.id,
+          guildId: guild.id,
+          adapterCreator: guild.voiceAdapterCreator,
+          selfDeaf: true,
+          selfMute: false,
+        });
+        hookConnection(connection, guild.id);
+        await waitReady(connection, `join-${attempt}`);
+        audioFailedUntil.delete(guild.id);
+        return true;
+      } catch (err) {
+        lastErr = err;
+        log(`voice-greet warn: audio join attempt ${attempt}/3 failed guild=${guild.id}: ${err.message}`);
+        destroyConnection(guild.id);
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
       }
-      if (existing) {
-        try { existing.destroy(); } catch { /* ignore */ }
-      }
-      const connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: guild.id,
-        adapterCreator: guild.voiceAdapterCreator,
-        selfDeaf: true,
-        selfMute: false,
-      });
-      hookConnection(connection, guild.id);
-      await entersState(connection, VoiceConnectionStatus.Ready, connectMs);
-      log(`voice-greet audio ready guild=${guild.id} channel=${channel.id}`);
-      return true;
-    } catch (err) {
-      log(`voice-greet warn: audio join failed guild=${guild.id}: ${err.message}; falling back to presence-only`);
-      audioFailedUntil.set(guild.id, nowFn() + AUDIO_RETRY_MS);
-      destroyConnection(guild.id);
-      try { sendVoiceStateUpdate(guild, channel.id); } catch (e) {
-        log(`voice-greet warn: op4 fallback failed: ${e.message}`);
-      }
-      return false;
     }
+    log(`voice-greet warn: audio join failed guild=${guild.id}: ${lastErr.message}; falling back to presence-only`);
+    audioFailedUntil.set(guild.id, nowFn() + AUDIO_RETRY_MS);
+    destroyConnection(guild.id);
+    try { sendVoiceStateUpdate(guild, channel.id); } catch (e) {
+      log(`voice-greet warn: op4 fallback failed: ${e.message}`);
+    }
+    return false;
   }
 
-  function ensureAudio(guild, channel) {
+  function ensureAudio(guild, channel, { force = false } = {}) {
     if (!guild) return Promise.resolve(false);
     const inflight = connecting.get(guild.id);
-    if (inflight) return inflight;
-    const p = ensureAudioInner(guild, channel).finally(() => {
+    if (inflight) {
+      return inflight.then((ok) => {
+        if (ok || !force) return ok;
+        return ensureAudio(guild, channel, { force: true });
+      });
+    }
+    const p = ensureAudioInner(guild, channel, force).finally(() => {
       if (connecting.get(guild.id) === p) connecting.delete(guild.id);
     });
     connecting.set(guild.id, p);
@@ -301,44 +379,97 @@ function createVoiceGreeter(opts = {}) {
     }
     const {
       getVoiceConnection, createAudioPlayer, createAudioResource,
-      AudioPlayerStatus, entersState, NoSubscriberBehavior,
+      AudioPlayerStatus, entersState, NoSubscriberBehavior, StreamType,
+      VoiceConnectionStatus,
     } = loadVoiceLib();
-    const connection = getVoiceConnection(guildId);
+    let connection = getVoiceConnection(guildId);
+    if (!connection || connection.state.status !== VoiceConnectionStatus.Ready) {
+      const guild = opts.getGuild ? opts.getGuild(guildId) : null;
+      const channelId = connection?.joinConfig?.channelId;
+      const channel = guild && channelId ? guild.channels?.cache?.get(channelId) : null;
+      if (guild && channel) {
+        const ready = await ensureAudio(guild, channel, { force: true });
+        if (!ready) throw new Error('audio not ready');
+        connection = getVoiceConnection(guildId);
+      }
+    }
     if (!connection) throw new Error('no voice connection');
-    const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-    const resource = createAudioResource(mp3Path);
-    const subscription = connection.subscribe(player);
+    const pcmPath = `${mp3Path}.pcm`;
     try {
-      player.play(resource);
-      await entersState(player, AudioPlayerStatus.Playing, 5_000);
-      await entersState(player, AudioPlayerStatus.Idle, playMs);
+      await transcodeToPcm(mp3Path, pcmPath);
+      const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      const resource = createAudioResource(fs.createReadStream(pcmPath), {
+        inputType: StreamType.Raw,
+        silencePaddingFrames: 5,
+      });
+      const subscription = connection.subscribe(player);
+      try {
+        player.play(resource);
+        await entersState(player, AudioPlayerStatus.Playing, 15_000);
+        await entersState(player, AudioPlayerStatus.Idle, playMs);
+      } finally {
+        try { player.stop(true); } catch { /* ignore */ }
+        try { subscription?.unsubscribe(); } catch { /* ignore */ }
+      }
     } finally {
-      try { player.stop(true); } catch { /* ignore */ }
-      try { subscription?.unsubscribe(); } catch { /* ignore */ }
+      try { fs.unlinkSync(pcmPath); } catch { /* ignore */ }
     }
   }
 
-  async function runQueue() {
-    if (running) return;
-    running = true;
-    try {
-      while (queue.length) {
-        const job = queue.shift();
-        queuedUsers.delete(job.userId);
-        const tmp = path.join(tmpDir, `greet-${job.userId}-${nowFn()}.mp3`);
-        try {
-          fs.mkdirSync(tmpDir, { recursive: true });
-          await ttsFn(job.text, tmp, ttsMs);
-          await playOnConnection(job.guildId, tmp);
-          log(`voice-greet played user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} elapsed ready`);
-        } catch (err) {
-          log(`voice-greet warn: play failed user=${job.userId}: ${err.message}`);
-        } finally {
-          try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  function runQueue() {
+    if (runPromise) return runPromise;
+    runPromise = (async () => {
+      try {
+        while (queue.length) {
+          const job = queue.shift();
+          queuedUsers.delete(job.userId);
+          const tmp = path.join(tmpDir, `greet-${job.userId}-${nowFn()}.mp3`);
+          try {
+            fs.mkdirSync(tmpDir, { recursive: true });
+            const guild = opts.getGuild ? opts.getGuild(job.guildId) : null;
+            const channel = guild?.channels?.cache?.get(job.channelId);
+            if (guild && channel) {
+              const ready = await ensureAudio(guild, channel, { force: true });
+              if (!ready) throw new Error('audio not ready');
+            }
+            await ttsFn(job.text, tmp, ttsMs);
+            await playOnConnection(job.guildId, tmp);
+            log(`voice-greet played user=${job.userId} bot=${job.isBot ? 'yes' : 'no'}`);
+          } catch (err) {
+            log(`voice-greet warn: play failed user=${job.userId}: ${err.message}`);
+          } finally {
+            try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+          }
         }
+      } finally {
+        runPromise = null;
+        if (queue.length) return runQueue();
       }
-    } finally {
-      running = false;
+    })();
+    return runPromise;
+  }
+
+  async function debugSpeak(text) {
+    try {
+      if (!findFfmpeg()) return { ok: false, reason: 'no-ffmpeg' };
+      const ctx = opts.getSpeakContext ? opts.getSpeakContext() : null;
+      if (!ctx?.guild || !ctx?.channel) return { ok: false, reason: 'bot-not-in-voice' };
+      const ready = await ensureAudio(ctx.guild, ctx.channel, { force: true });
+      if (!ready) return { ok: false, reason: 'audio-not-ready' };
+      const phrase = String(text || 'Test audio. Un, deux, trois.').slice(0, TTS_MAX_CHARS);
+      queue.push({
+        userId: 'debug-test',
+        guildId: ctx.guild.id,
+        channelId: ctx.channel.id,
+        text: phrase,
+        isBot: false,
+      });
+      log(`voice-greet queued user=debug-test q=${queue.length}`);
+      await runQueue();
+      return { ok: true };
+    } catch (err) {
+      log(`voice-greet warn: debugSpeak: ${err.message}`);
+      return { ok: false, reason: 'error' };
     }
   }
 
@@ -369,9 +500,8 @@ function createVoiceGreeter(opts = {}) {
         queueUserIds: queuedUsers,
       });
       if (!decision.ok) return decision;
-      if (ffmpegOk === null) ffmpegOk = hasFfmpeg();
-      if (!ffmpegOk) {
-        log('voice-greet warn: ffmpeg missing, skipping speak');
+      if (!hasFfmpeg()) {
+        log(`voice-greet warn: ffmpeg missing, skipping speak (looked in ${FFMPEG_CANDIDATES.filter(Boolean).join(', ') || 'none'})`);
         return { ok: false, reason: 'no-ffmpeg' };
       }
       const member = newState?.member || oldState?.member || guild.members?.cache?.get(userId);
@@ -411,6 +541,7 @@ function createVoiceGreeter(opts = {}) {
     shutdown,
     ensureAudio,
     handleVoiceStateUpdate,
+    debugSpeak,
     // test helpers
     _queue: queue,
     _cooldownUntil: cooldownUntil,
@@ -428,6 +559,8 @@ module.exports = {
   shouldGreet,
   fetchTtsMp3,
   hasFfmpeg,
+  findFfmpeg,
+  transcodeToPcm,
   flagOn,
   createVoiceGreeter,
 };

@@ -71,6 +71,10 @@ ok(vg.shouldGreet({ ...base, queueUserIds: new Set(['user1']) }).reason === 'alr
 // bots ARE greeted
 ok(vg.shouldGreet({ ...base, userId: 'otherbot' }).ok, 'greets other bots (no bot-user skip in shouldGreet)');
 
+ok(typeof vg.findFfmpeg === 'function', 'findFfmpeg is exported');
+ok(vg.hasFfmpeg() === Boolean(vg.findFfmpeg()), 'hasFfmpeg is existsSync, not a short spawn');
+
+
 // greeter wiring with fake TTS/play
 const plays = [];
 const greeter = vg.createVoiceGreeter({

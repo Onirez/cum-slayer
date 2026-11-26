@@ -8,6 +8,7 @@
  *   GET  /health  — no auth (Fly checks)
  *   POST /act     — Bearer ACT_SHARED_SECRET, raw JSON body = act.sh stdin
  *   POST /run     — Bearer, JSON { tool, args?, stdin? } for the other CLIs
+ *   POST /voice-test — Bearer, plays a short test line in the current voice channel
  */
 
 const http = require('http');
@@ -146,7 +147,7 @@ function runTool(tool, args, stdin, extraEnv) {
   });
 }
 
-function start({ log = console.log, getReady = () => true } = {}) {
+function start({ log = console.log, getReady = () => true, onVoiceTest = null } = {}) {
   if (!flagOn('ACT_HTTP')) return null;
   const port = Number(process.env.PORT || process.env.ACT_HTTP_PORT || 8080);
   const host = process.env.ACT_HTTP_HOST || '0.0.0.0';
@@ -159,6 +160,24 @@ function start({ log = console.log, getReady = () => true } = {}) {
     try {
       if (req.method === 'GET' && url.pathname === '/health') {
         json(res, 200, { ok: true, ready: Boolean(getReady()) });
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/voice-test') {
+        if (!process.env.ACT_SHARED_SECRET) {
+          json(res, 503, { ok: false, error: 'act endpoint not configured' });
+          return;
+        }
+        if (!authorize(req)) {
+          json(res, 401, { ok: false, error: 'unauthorized' });
+          return;
+        }
+        if (typeof onVoiceTest !== 'function') {
+          json(res, 503, { ok: false, error: 'voice test not available' });
+          return;
+        }
+        log('act-http /voice-test');
+        const result = await onVoiceTest();
+        json(res, result && result.ok ? 200 : 500, result && typeof result === 'object' ? result : { ok: false });
         return;
       }
       if (req.method === 'POST' && (url.pathname === '/act' || url.pathname === '/run')) {

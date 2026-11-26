@@ -597,6 +597,18 @@ const voiceGreeter = voiceGreet.createVoiceGreeter({
   graceMs: VOICE_GREET_GRACE_MS,
   log,
   getBotId: () => client.user?.id || null,
+  getGuild: (id) => client.guilds.cache.get(id) || null,
+  getSpeakContext: () => {
+    const botId = client.user?.id;
+    if (!botId) return null;
+    for (const guild of client.guilds.cache.values()) {
+      const chId = guild.voiceStates.cache.get(botId)?.channelId;
+      if (!chId) continue;
+      const channel = guild.channels.cache.get(chId);
+      if (channel) return { guild, channel };
+    }
+    return null;
+  },
   sendVoiceStateUpdate,
 });
 
@@ -1957,7 +1969,11 @@ process.on('SIGTERM', () => {
 // Optional /act HTTP API (Fly). Off unless ACT_HTTP is explicitly on.
 if (!['0', 'false', 'no', 'off', ''].includes(String(process.env.ACT_HTTP ?? 'off').trim().toLowerCase())) {
   try {
-    require('./act_http').start({ log, getReady: () => client.isReady() });
+    require('./act_http').start({
+      log,
+      getReady: () => client.isReady(),
+      onVoiceTest: () => voiceGreeter.debugSpeak('Test audio. Un, deux, trois.'),
+    });
   } catch (err) {
     log(`act-http failed to start: ${err.message}`);
   }
