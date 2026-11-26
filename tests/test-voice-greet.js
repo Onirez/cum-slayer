@@ -22,9 +22,15 @@ function ok(cond, msg) {
   }
 }
 
-ok(vg.GREETINGS.length >= 20 && vg.GREETINGS.length <= 40, `~20-30 phrases (${vg.GREETINGS.length})`);
+ok(vg.GREETINGS.length === 30, `30 phrases (${vg.GREETINGS.length})`);
 ok(vg.GREETINGS.every((p) => p.includes('{name}')), 'every phrase has {name}');
-ok(vg.GREETINGS.every((p) => p.length <= 160), 'phrases stay short for TTS');
+ok(vg.GREETINGS.every((p) => p.length <= 40), 'phrases stay very short for fast TTS');
+ok(new Set(vg.GREETINGS).size === vg.GREETINGS.length, 'phrases are unique');
+ok(vg.GREETINGS.includes('Salut gros con de {name}.'), 'keeps the signature phrase');
+ok(vg.GREETINGS.every((p) => {
+  const words = p.replaceAll('{name}', '').split(/[^A-Za-zÀ-ÿ']+/).filter(Boolean);
+  return words.length >= 2 && words.length <= 5;
+}), 'each phrase is 2 to 5 words plus the name');
 
 const banned = [
   'pédé', 'pede', 'tapette', 'gouine', 'pd ', 'nègre', 'negre',
