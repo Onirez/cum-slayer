@@ -1,8 +1,10 @@
 'use strict';
 
 /**
- * Voice greetings when someone (human or bot) joins the channel the bot
- * is already in. Pre-written French lines + Google Translate TTS (no API
+ * Voice greetings when someone (human or bot) arrives in a voice channel:
+ * a fresh join, or a move from another voice channel. If the bot is not
+ * already in the destination, it joins to speak, then auto-voice may
+ * move it back. Pre-written French lines + Google Translate TTS (no API
  * key). Failures are logged and swallowed: they must never crash the bridge.
  */
 
@@ -239,19 +241,24 @@ async function fetchTtsMp3(text, dest, timeoutMs = DEFAULT_TTS_MS) {
   throw lastErr;
 }
 
+function cooldownKey(userId, channelId) {
+  return `${userId}:${channelId}`;
+}
+
 function shouldGreet(event) {
   const {
-    botId, botChannelId, userId, oldChannelId, newChannelId, channelType, now,
-    joinedAt, graceMs, cooldownUntil, queueUserIds,
+    botId, userId, oldChannelId, newChannelId, channelType, now,
+    cooldownUntil, queueUserIds,
   } = event;
   if (!botId || !userId) return { ok: false, reason: 'missing-id' };
   if (userId === botId) return { ok: false, reason: 'self' };
-  if (!botChannelId) return { ok: false, reason: 'bot-not-in-voice' };
   if (!newChannelId) return { ok: false, reason: 'left' };
   if (newChannelId === oldChannelId) return { ok: false, reason: 'no-channel-change' };
-  if (newChannelId !== botChannelId) return { ok: false, reason: 'other-channel' };
   if (channelType != null && channelType !== 2) return { ok: false, reason: 'not-voice' };
-  if (joinedAt && now - joinedAt < graceMs) return { ok: false, reason: 'grace' };
+  // A channel change (fresh join or move) is an arrival. Grace only exists
+  // so we do not greet people already in a room when the bot itself joins;
+  // those people do not emit a channel change, so arrivals are never gated
+  // on the bot already being in the destination, nor on the grace window.
   if (cooldownUntil && now < cooldownUntil) return { ok: false, reason: 'cooldown' };
   if (queueUserIds && queueUserIds.has(userId)) return { ok: false, reason: 'already-queued' };
   return { ok: true };
@@ -274,7 +281,7 @@ function createVoiceGreeter(opts = {}) {
   const cacheDir = opts.cacheDir || defaultCacheDir();
   let lastPlayStats = null;
 
-  const cooldownUntil = new Map(); // userId -> ts
+  const cooldownUntil = new Map(); // `${userId}:${channelId}` -> ts
   const lastPhrase = new Map();
   const joinedAt = new Map(); // guildId -> { channelId, at }
   const audioFailedUntil = new Map();
@@ -282,6 +289,7 @@ function createVoiceGreeter(opts = {}) {
   const queue = [];
   const queuedUsers = new Set();
   let runPromise = null;
+  let currentJob = null;
   let voiceLib = null;
   hasFfmpeg();
 
@@ -492,6 +500,7 @@ function createVoiceGreeter(opts = {}) {
       try {
         while (queue.length) {
           const job = queue.shift();
+          currentJob = job;
           queuedUsers.delete(job.userId);
           const tmp = path.join(tmpDir, `greet-${job.userId}-${nowFn()}.mp3`);
           const tStart = nowFn();
@@ -518,7 +527,7 @@ function createVoiceGreeter(opts = {}) {
             });
             if (startMs == null) startMs = nowFn() - tStart;
             const totalMs = nowFn() - tStart;
-            cooldownUntil.set(job.userId, nowFn() + cooldownMs);
+            cooldownUntil.set(cooldownKey(job.userId, job.channelId), nowFn() + cooldownMs);
             lastPlayStats = {
               userId: job.userId,
               start_ms: startMs,
@@ -531,12 +540,16 @@ function createVoiceGreeter(opts = {}) {
           } catch (err) {
             log(`voice-greet warn: play failed user=${job.userId}: ${err.message}`);
           } finally {
+            if (currentJob === job) currentJob = null;
             try { fs.unlinkSync(tmp); } catch { /* ignore */ }
           }
         }
       } finally {
         runPromise = null;
         if (queue.length) return runQueue();
+        if (typeof opts.onQueueIdle === 'function') {
+          try { opts.onQueueIdle(); } catch { /* ignore */ }
+        }
       }
     })();
     return runPromise;
@@ -624,11 +637,21 @@ function createVoiceGreeter(opts = {}) {
         now,
         joinedAt: join && join.channelId === botChannelId ? join.at : 0,
         graceMs,
-        cooldownUntil: cooldownUntil.get(userId) || 0,
+        cooldownUntil: newChannelId ? (cooldownUntil.get(cooldownKey(userId, newChannelId)) || 0) : 0,
         queueUserIds: queuedUsers,
       });
-      const relevant = oldChannelId === botChannelId || newChannelId === botChannelId;
+      const channelChanged = oldChannelId !== newChannelId;
+      const relevant = oldChannelId === botChannelId || newChannelId === botChannelId || channelChanged;
       if (!decision.ok) {
+        if (decision.reason === 'already-queued' && newChannelId) {
+          const job = queue.find((j) => j.userId === userId && j.guildId === guild.id);
+          if (job && job.channelId !== newChannelId) {
+            const prevChan = job.channelId;
+            job.channelId = newChannelId;
+            log(`voice-greet retarget user=${userId} old=${oldChannelId || 'none'} from=${prevChan} new=${newChannelId}`);
+            return { ok: true, retargeted: true };
+          }
+        }
         if (relevant) {
           log(`voice-greet skip user=${userId} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} botchan=${botChannelId || 'none'} reason=${decision.reason}`);
         }
@@ -657,13 +680,21 @@ function createVoiceGreeter(opts = {}) {
         text: picked.text,
         isBot: Boolean(user?.bot || member?.user?.bot),
       });
-      log(`voice-greet queued user=${userId} bot=${user?.bot ? 'yes' : 'no'} q=${queue.length} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} from_move=${oldChannelId && oldChannelId !== newChannelId ? 'yes' : 'no'}`);
+      const follow = botChannelId && botChannelId !== newChannelId ? 'yes' : 'no';
+      log(`voice-greet queued user=${userId} bot=${user?.bot ? 'yes' : 'no'} q=${queue.length} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} botchan=${botChannelId || 'none'} from_move=${oldChannelId && oldChannelId !== newChannelId ? 'yes' : 'no'} follow=${follow}`);
       setTimeout(() => { runQueue().catch((err) => log(`voice-greet warn: queue: ${err.message}`)); }, 0).unref?.();
       return { ok: true, text: picked.text, name };
     } catch (err) {
       log(`voice-greet warn: handle failed: ${err.message}`);
       return { ok: false, reason: 'error' };
     }
+  }
+
+  function heldChannel(guildId) {
+    if (!guildId) return null;
+    if (currentJob && currentJob.guildId === guildId) return currentJob.channelId;
+    const queued = queue.find((j) => j.guildId === guildId);
+    return queued ? queued.channelId : null;
   }
 
   return {
@@ -677,6 +708,7 @@ function createVoiceGreeter(opts = {}) {
     handleVoiceStateUpdate,
     debugSpeak,
     prewarm,
+    heldChannel,
     // test helpers
     _queue: queue,
     _cooldownUntil: cooldownUntil,
@@ -692,6 +724,7 @@ module.exports = {
   fillPhrase,
   pickPhrase,
   shouldGreet,
+  cooldownKey,
   fetchTtsMp3,
   hasFfmpeg,
   findFfmpeg,

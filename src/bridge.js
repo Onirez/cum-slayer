@@ -610,6 +610,9 @@ const voiceGreeter = voiceGreet.createVoiceGreeter({
     return null;
   },
   sendVoiceStateUpdate,
+  onQueueIdle: () => {
+    if (AUTO_VOICE) scheduleAutoVoice('greet-idle');
+  },
 });
 
 function botVoiceChannelId(guild) {
@@ -749,6 +752,12 @@ function syncAutoVoiceGuild(guild, reason) {
       log(
         `auto-voice snapshot guild=${guild.id} bot_in=${inChannel || 'none'} target=${targetId || 'none'} counts=${formatVoiceCounts(guild, counts)} afk=${afkId || 'none'} reason=${reason}`,
       );
+    }
+
+    const held = typeof voiceGreeter.heldChannel === 'function' ? voiceGreeter.heldChannel(guild.id) : null;
+    if (held && (targetId !== held || inChannel !== held)) {
+      log(`auto-voice hold guild=${guild.id} stay=${held} target=${targetId || 'none'} in=${inChannel || 'none'} reason=voice-greet`);
+      return;
     }
 
     if (!targetId) {
