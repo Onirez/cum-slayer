@@ -39,6 +39,32 @@ function basenameFromUrl(url) {
   }
 }
 
+const PREVIEW_MAX_EDGE = 1024;
+
+/**
+ * Rewrite a Discord CDN / media URL to the media proxy as JPEG (often smaller).
+ * Does not set width/height (the proxy would crop). Keeps signed query params.
+ * Null if the host is not allowlisted.
+ */
+function previewUrl(url, maxEdge = PREVIEW_MAX_EDGE) {
+  try {
+    const u = new URL(String(url));
+    const host = (u.hostname || '').toLowerCase();
+    if (host !== 'cdn.discordapp.com' && host !== 'media.discordapp.net') return null;
+    if (u.protocol !== 'https:') return null;
+    if (u.username || u.password) return null;
+    if (u.port && u.port !== '443') return null;
+    u.hostname = 'media.discordapp.net';
+    u.port = '';
+    // Do not set width/height: Discord's media proxy crops to a square when
+    // both are provided. Resizing is done locally by img.sh / PIL instead.
+    u.searchParams.set('format', 'jpeg');
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 function asList(collection) {
   if (!collection) return [];
   if (Array.isArray(collection)) return collection.filter(Boolean);
@@ -61,8 +87,10 @@ function toImage(raw) {
   const heightRaw = raw.height;
   const width = widthRaw === undefined || widthRaw === null || widthRaw === '' ? null : Number(widthRaw);
   const height = heightRaw === undefined || heightRaw === null || heightRaw === '' ? null : Number(heightRaw);
+  const preview = previewUrl(url);
   return {
     url,
+    preview_url: preview && preview !== url ? preview : preview,
     filename,
     content_type: contentType || null,
     width: Number.isFinite(width) ? width : null,
@@ -371,6 +399,8 @@ function withMedia(target, message, include) {
 module.exports = {
   IMAGE_MAX_BYTES,
   IMAGE_MAX_COUNT,
+  PREVIEW_MAX_EDGE,
+  previewUrl,
   VIDEO_MAX_BYTES,
   VIDEO_MAX_COUNT,
   collectImages,

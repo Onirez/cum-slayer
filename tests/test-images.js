@@ -12,7 +12,7 @@ const images = fs.existsSync(path.join(root, 'images.js'))
 const scope = fs.existsSync(path.join(root, 'scope.js'))
   ? require('../scope')
   : require('../src/scope');
-const { collectImages, shouldAttachImages, IMAGE_MAX_COUNT, IMAGE_MAX_BYTES } = images;
+const { collectImages, shouldAttachImages, IMAGE_MAX_COUNT, IMAGE_MAX_BYTES, previewUrl } = images;
 
 let pass = 0;
 let fail = 0;
@@ -126,6 +126,19 @@ ok(collectImages({ attachments: [], embeds: [] }).length === 0, 'empty message h
 ok(collectImages(null).length === 0, 'null message has no images');
 ok(collectImages({}).length === 0, 'message without attachments or embeds has no images');
 
+// --- previewUrl ---
+const prev = previewUrl('https://cdn.discordapp.com/attachments/1/2/a.png?ex=abc&is=def&hm=fff');
+ok(prev && prev.startsWith('https://media.discordapp.net/attachments/1/2/a.png'), 'previewUrl switches host to media.discordapp.net');
+ok(prev.includes('format=jpeg') && !prev.includes('width=') && !prev.includes('height='), 'previewUrl asks for jpeg without width/height (no crop)');
+ok(prev.includes('ex=abc') && prev.includes('hm=fff'), 'previewUrl keeps signed query params');
+ok(previewUrl('https://evil.example/a.png') === null, 'previewUrl rejects a non-Discord host');
+ok(previewUrl('http://cdn.discordapp.com/a.png') === null, 'previewUrl rejects http');
+ok(previewUrl('https://user:pass@cdn.discordapp.com/a.png') === null, 'previewUrl rejects userinfo');
+
+const collected = collectImages({ attachments: [PNG] });
+ok(collected[0] && collected[0].preview_url, 'collectImages adds preview_url');
+ok(collected[0].preview_url.includes('media.discordapp.net'), 'preview_url uses the media proxy');
+
 // --- shouldAttachImages ---
 ok(shouldAttachImages({ mentioned: true }) === true, 'include images when the bot is mentioned');
 ok(shouldAttachImages({ named: true }) === true, 'include images when the bot is named');
@@ -154,13 +167,15 @@ const script = fs.existsSync(path.join(root, 'img.sh'))
   ? path.join(root, 'img.sh')
   : path.join(root, 'scripts', 'img.sh');
 const tmpCache = fs.mkdtempSync(path.join(os.tmpdir(), 'img-cache-'));
-const runImg = (url, extraEnv = {}) => spawnSync('bash', [script, ...((url === undefined) ? [] : [url])], {
+const runImg = (url, extraEnv = {}, extraArgs = []) => spawnSync('bash', [script, ...extraArgs, ...((url === undefined) ? [] : [url])], {
   encoding: 'utf8',
-  env: { ...process.env, IMG_CACHE_DIR: tmpCache, ...extraEnv },
+  env: { ...process.env, IMG_CACHE_DIR: tmpCache, IMG_CACHE_GC_MIN: '0', ...extraEnv },
 });
 
 const noArg = runImg();
 ok(noArg.status === 2 && /Usage:/.test(noArg.stderr), 'img.sh without args exits 2 with usage');
+const noAll = runImg(undefined, {}, ['--all']);
+ok(noAll.status === 2 && /Usage:/.test(noAll.stderr), 'img.sh --all without urls exits 2 with usage');
 
 const rejected = [
   ['http://cdn.discordapp.com/attachments/1/2/a.png', 'http (not https)'],
@@ -174,6 +189,11 @@ for (const [url, label] of rejected) {
   const r = runImg(url);
   ok(r.status !== 0 && /only https URLs/.test(r.stderr) && !r.stdout.includes('cdn.discordapp.com') && !r.stderr.includes(url), `img.sh rejects ${label} and does not print the url`);
 }
+
+// Local resize (no network): 2000x1500 PNG -> 1024x768 JPEG.
+const helperDir = fs.existsSync(path.join(root, 'img_fetch.py')) ? root : path.join(root, 'scripts');
+const resize = spawnSync('python3', [path.join(__dirname, 'test-img-resize.py'), helperDir], { encoding: 'utf8' });
+ok(resize.status === 0 && /resize-ok 1024 768/.test(resize.stdout), `resizes a 2000x1500 png to 1024px jpeg (${((resize.stderr || resize.stdout || '').trim()).slice(0, 200)})`);
 
 // Evict files older than 24 h, keep fresh ones.
 const stale = path.join(tmpCache, 'stale.img');

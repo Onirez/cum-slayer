@@ -58,3 +58,4 @@ data/full_count.state.json
 data/full_count.log
 data/full_count.lock
 stats.png
+__pycache__/

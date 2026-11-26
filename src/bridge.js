@@ -339,7 +339,8 @@ function localTs() {
   const sign = offMin >= 0 ? '+' : '-';
   const abs = Math.abs(offMin);
   const tz = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${tz}`;
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}${tz}`;
 }
 
 function log(message) {
@@ -499,6 +500,7 @@ async function getReferenced(message) {
       message_id: ref.id,
       author_id: ref.author?.id || null,
       author: authorName(ref),
+      avatar_url: ref.author ? (ref.author.displayAvatarURL({ size: 1024, extension: 'png' }) || null) : null,
       content: truncate(resolveContent(ref), CONTENT_TRUNCATE),
     };
     return images.withMedia(out, ref, true);
@@ -508,6 +510,7 @@ async function getReferenced(message) {
       message_id: refId,
       author_id: user?.id || null,
       author: user ? (user.globalName || user.username || null) : null,
+      avatar_url: user && typeof user.displayAvatarURL === 'function' ? (user.displayAvatarURL({ size: 1024, extension: 'png' }) || null) : null,
       content: null,
     };
   }
@@ -518,6 +521,7 @@ async function postWebhook(payload) {
   const key = config.ROUTINE_WEBHOOK_KEY;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), WEBHOOK_TIMEOUT_MS);
+  const started = Date.now();
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -531,10 +535,10 @@ async function postWebhook(payload) {
     });
     const text = await res.text().catch(() => '');
     const snippet = text.replace(/\s+/g, ' ').slice(0, 200);
-    log(`webhook POST status=${res.status} body=${snippet || '(empty)'}`);
+    log(`webhook POST status=${res.status} duration_ms=${Date.now() - started} body=${snippet || '(empty)'}`);
     return res.ok;
   } catch (err) {
-    log(`webhook POST failed: ${err.name}: ${err.message}`);
+    log(`webhook POST failed: ${err.name}: ${err.message} duration_ms=${Date.now() - started}`);
     return false;
   } finally {
     clearTimeout(timer);
@@ -1187,6 +1191,7 @@ async function fireFollow(message) {
         username: message.author.username,
         display_name: authorName(message),
         bot: authorIsBot,
+        avatar_url: message.author.displayAvatarURL({ size: 1024, extension: 'png' }) || null,
       },
       content: truncate(resolveContent(message), 2000),
       recent: await recentMessages(message, RECENT_LIMIT),
@@ -1416,6 +1421,7 @@ client.on('messageCreate', async (message) => {
         username: message.author.username,
         display_name: authorName(message),
         bot: authorIsBot,
+        avatar_url: message.author.displayAvatarURL({ size: 1024, extension: 'png' }) || null,
       },
       content: truncate(resolveContent(message), 2000),
       recent: await recentMessages(message, RECENT_LIMIT),
