@@ -206,6 +206,50 @@ fs.utimesSync(stale, ago / 1000, ago / 1000);
 runImg('https://example.com/nope.png');
 ok(!fs.existsSync(stale) && fs.existsSync(fresh), 'img.sh deletes cache files older than 24 h and keeps fresh ones');
 
+
+
+// --- collectFiles: every attachment, with URL, humans and bots ---
+const { collectFiles, withFiles, withMedia, FILE_MAX_COUNT, describeSummary, attachmentsSummary } = images;
+
+const WAV = {
+  id: 'att-wav',
+  name: 'archive9_ambient.wav',
+  url: 'https://cdn.discordapp.com/attachments/1/2/archive9_ambient.wav?ex=abc',
+  proxyURL: 'https://media.discordapp.net/attachments/1/2/archive9_ambient.wav',
+  contentType: 'audio/wav',
+  size: 345678,
+  duration_secs: 12.5,
+};
+const files = collectFiles({ attachments: [WAV] });
+ok(files.length === 1, 'collectFiles keeps an audio attachment');
+ok(files[0].url === WAV.url, 'files include the CDN url');
+ok(files[0].filename === 'archive9_ambient.wav', 'files include the filename');
+ok(files[0].content_type === 'audio/wav', 'files include the content type');
+ok(files[0].size === 345678, 'files include the size');
+ok(files[0].duration === 12.5, 'files include the duration');
+ok(files[0].kind === 'audio', 'wav is classified as audio');
+ok(files[0].proxy_url === WAV.proxyURL, 'files include proxy_url when it differs');
+
+ok(collectFiles({ attachments: [PNG] })[0].kind === 'image', 'image attachments also appear in files');
+ok(collectFiles({
+  attachments: [{ url: 'https://cdn.discordapp.com/attachments/1/2/notes.txt', name: 'notes.txt', contentType: 'text/plain', size: 12 }],
+})[0].kind === 'file', 'plain text attachments are kind=file');
+
+const botPayload = {};
+withFiles(botPayload, { attachments: [WAV] });
+ok(Array.isArray(botPayload.files) && botPayload.files[0].filename === 'archive9_ambient.wav', 'withFiles attaches files even without the images gate');
+ok(botPayload.attachments_summary && botPayload.attachments_summary[0].kind === 'audio', 'attachments_summary now tags audio');
+ok(/audio: archive9_ambient\.wav, 12\.5s/.test(describeSummary(botPayload.attachments_summary)), 'summary describes audio with duration');
+
+const gated = {};
+withMedia(gated, { attachments: [WAV] }, false);
+ok(gated.files && gated.files.length === 1, 'withMedia still includes files when images/videos are gated off');
+ok(!gated.images && !gated.videos, 'withMedia(..., false) does not add images/videos');
+
+ok(collectFiles({ attachments: [] }).length === 0, 'no files when there are no attachments');
+ok(collectFiles({ embeds: [{ image: PNG }] }).length === 0, 'collectFiles ignores embed-only images (those stay in images)');
+
+
 try { fs.rmSync(tmpCache, { recursive: true, force: true }); } catch { /* ignore */ }
 
 console.log(`${pass} passed, ${fail} failed`);

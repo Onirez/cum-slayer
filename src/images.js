@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Collect image/video attachments and embed images, thumbnails and
+ * Collect image/video/file attachments and embed images, thumbnails and
  * video/gifv for a Discord message payload. Pure helpers, no I/O.
+ * `files` lists every real attachment (with URL) for humans and bots.
  */
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
@@ -264,12 +265,34 @@ function withVideos(target, message, include) {
   return target;
 }
 
+function inferAudioType(filename, url) {
+  const s = `${filename || ''} ${url || ''}`.toLowerCase();
+  if (/\.(?:wav|wave)(?:$|[?#])/u.test(s)) return 'audio/wav';
+  if (/\.mp3(?:$|[?#])/u.test(s)) return 'audio/mpeg';
+  if (/\.(?:ogg|oga|opus)(?:$|[?#])/u.test(s)) return 'audio/ogg';
+  if (/\.m4a(?:$|[?#])/u.test(s)) return 'audio/mp4';
+  if (/\.flac(?:$|[?#])/u.test(s)) return 'audio/flac';
+  if (/\.aac(?:$|[?#])/u.test(s)) return 'audio/aac';
+  return '';
+}
+
+function normalizeAudioType(value, filename, url) {
+  const base = normalizeType(value);
+  if (base === 'audio/x-wav' || base === 'audio/wave' || base === 'audio/vnd.wave') return 'audio/wav';
+  if (base === 'audio/mp3') return 'audio/mpeg';
+  if (base === 'audio/x-m4a' || base === 'audio/m4a') return 'audio/mp4';
+  if (base.startsWith('audio/')) return base;
+  return inferAudioType(filename, url);
+}
+
 function kindFromType(type, filename, url) {
-  const t = normalizeType(type) || inferType(filename, url) || inferVideoType(filename, url);
+  const t = normalizeType(type) || inferType(filename, url) || inferVideoType(filename, url) || inferAudioType(filename, url);
   if (t && t.startsWith('video/')) return 'video';
   if (t && t.startsWith('image/')) return 'image';
+  if (t && t.startsWith('audio/')) return 'audio';
   if (inferVideoType(filename, url)) return 'video';
   if (inferType(filename, url)) return 'image';
+  if (inferAudioType(filename, url)) return 'audio';
   return 'file';
 }
 
@@ -371,6 +394,11 @@ function describeSummary(summary) {
       return `vidéo: ${bits.join(', ')}`;
     }
     if (s.kind === 'image') return `image: ${name}`;
+    if (s.kind === 'audio') {
+      const bits = [name];
+      if (s.duration != null) bits.push(`${s.duration}s`);
+      return `audio: ${bits.join(', ')}`;
+    }
     if (s.kind === 'sticker') return `sticker: ${name}`;
     return `fichier: ${name}`;
   });
@@ -384,11 +412,70 @@ function annotateEmptyContent(content, message) {
   return describeSummary(attachmentsSummary(message)) || text;
 }
 
-function withMedia(target, message, include) {
+const FILE_MAX_COUNT = 8;
+const FILE_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Every real attachment, with a URL, for humans and bots alike.
+ * Unlike images/videos, this is not gated on "aimed at the bot".
+ */
+function toFile(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const url = raw.url || raw.proxyURL || raw.proxy_url || null;
+  if (!url || typeof url !== 'string') return null;
+  const filename = raw.name || raw.filename || basenameFromUrl(url) || 'fichier';
+  const contentType = normalizeType(raw.contentType || raw.content_type)
+    || inferType(filename, url)
+    || inferVideoType(filename, url)
+    || inferAudioType(filename, url)
+    || null;
+  const size = numOrNull(raw.size);
+  const duration = numOrNull(raw.duration ?? raw.duration_secs ?? raw.durationSecs);
+  const proxy = raw.proxyURL || raw.proxy_url || null;
+  const kind = kindFromType(contentType, filename, url);
+  const item = {
+    url,
+    filename,
+    content_type: contentType,
+    size,
+    duration,
+    kind,
+    id: raw.id != null && raw.id !== '' ? String(raw.id) : null,
+    proxy_url: proxy && proxy !== url ? proxy : (proxy || null),
+  };
+  if (size != null && size > FILE_MAX_BYTES) item.skip_reason = 'too_large';
+  return item;
+}
+
+function collectFiles(message) {
+  if (!message) return [];
+  const out = [];
+  const seen = new Set();
+  for (const attachment of asList(message.attachments)) {
+    if (out.length >= FILE_MAX_COUNT) break;
+    const item = toFile(attachment);
+    if (!item) continue;
+    if (seen.has(item.url)) continue;
+    seen.add(item.url);
+    out.push(item);
+  }
+  return out;
+}
+
+function withFiles(target, message) {
   if (!target) return target;
+  const list = collectFiles(message);
+  if (list.length) target.files = list;
+  else delete target.files;
   const summary = attachmentsSummary(message);
   if (summary.length) target.attachments_summary = summary;
   else delete target.attachments_summary;
+  return target;
+}
+
+function withMedia(target, message, include) {
+  if (!target) return target;
+  withFiles(target, message);
   if (include) {
     withImages(target, message, true);
     withVideos(target, message, true);
@@ -403,12 +490,16 @@ module.exports = {
   previewUrl,
   VIDEO_MAX_BYTES,
   VIDEO_MAX_COUNT,
+  FILE_MAX_COUNT,
+  FILE_MAX_BYTES,
   collectImages,
   collectVideos,
+  collectFiles,
   shouldAttachImages,
   shouldAttachMedia: shouldAttachImages,
   withImages,
   withVideos,
+  withFiles,
   withMedia,
   attachmentsSummary,
   annotateEmptyContent,

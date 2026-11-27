@@ -1419,14 +1419,12 @@ async function fireFollow(message) {
       skills: loadActiveSkills(),
       trigger,
     };
-    if (includeImages) images.withMedia(payload, message, true);
-    else {
-      const summary = images.attachmentsSummary(message);
-      if (summary.length) payload.attachments_summary = summary;
-    }
+    // files + attachments_summary always (humans and bots). images/videos
+    // stay gated on shouldAttachImages for the triggering message.
+    images.withMedia(payload, message, includeImages);
     shrinkPayload(payload);
     log(
-      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} videos=${(payload.videos || []).length}+${(payload.referenced && payload.referenced.videos || []).length} attachments_summary=${(payload.attachments_summary || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} videos=${(payload.videos || []).length}+${(payload.referenced && payload.referenced.videos || []).length} files=${(payload.files || []).length}+${(payload.referenced && payload.referenced.files || []).length} attachments_summary=${(payload.attachments_summary || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
     );
     await postWebhook(payload);
   } catch (err) {
@@ -1649,15 +1647,13 @@ client.on('messageCreate', async (message) => {
       skills: loadActiveSkills(),
       trigger,
     };
-    if (includeImages) images.withMedia(payload, message, true);
-    else {
-      const summary = images.attachmentsSummary(message);
-      if (summary.length) payload.attachments_summary = summary;
-    }
+    // files + attachments_summary always (humans and bots). images/videos
+    // stay gated on shouldAttachImages for the triggering message.
+    images.withMedia(payload, message, includeImages);
     shrinkPayload(payload);
 
     log(
-      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} videos=${(payload.videos || []).length}+${(payload.referenced && payload.referenced.videos || []).length} attachments_summary=${(payload.attachments_summary || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
+      `payload bytes=${JSON.stringify(payload).length} recent=${payload.recent.length} skills=${payload.skills.length} mentioned_memories=${payload.memory.mentioned.length} user_ctx=${payload.users ? `${payload.users.author.recent.length}+${payload.users.others.length}` : 'off'} images=${(payload.images || []).length}+${(payload.referenced && payload.referenced.images || []).length} videos=${(payload.videos || []).length}+${(payload.referenced && payload.referenced.videos || []).length} files=${(payload.files || []).length}+${(payload.referenced && payload.referenced.files || []).length} attachments_summary=${(payload.attachments_summary || []).length} guild_roles=${payload.guild?.roles?.length ?? 0} guild_channels=${payload.guild?.channels?.length ?? 0}`,
     );
 
     await postWebhook(payload);
