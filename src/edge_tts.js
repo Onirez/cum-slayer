@@ -20,11 +20,13 @@ const WIN_EPOCH = 11644473600;
 const AUDIO_DELIM = Buffer.from('Path:audio\r\n');
 const JSON_XML_DELIM = '\r\n\r\n';
 
-// Remy multilingual is more expressive and natural than Henri, which sounded
-// robotic. Use default pitch (lowered pitch was too deep) and a natural rate.
-const DEFAULT_VOICE = 'fr-FR-RemyMultilingualNeural';
+// Remy multilingual auto-switches to English on names like "Dave Ops".
+// Edge Read Aloud rejects <lang xml:lang> (no audio), so we use monolingual
+// Henri to keep every greeting in French. Pitch and rate stay natural.
+const DEFAULT_VOICE = 'fr-FR-HenriNeural';
 const DEFAULT_PITCH = '+0%';
 const DEFAULT_RATE = '+0%';
+const DEFAULT_LANG = 'fr-FR';
 
 const SWAP_FIRST_WORD = { swappedWord: 0xEF0569FB, swappedSum: 0x76F50F34, swappedProduct: 0xC3EFEA97 };
 const SWAP_SECOND_WORD = { swappedWord: 0xC31713DB, swappedSum: 0x1881CE3C, swappedProduct: 0x35BD1EC9 };
@@ -106,11 +108,24 @@ function voiceSettings(overrides = {}) {
     voice: String(overrides.voice || process.env.TTS_VOICE || DEFAULT_VOICE),
     pitch: String(overrides.pitch || process.env.TTS_PITCH || DEFAULT_PITCH),
     rate: String(overrides.rate || process.env.TTS_RATE || DEFAULT_RATE),
+    lang: String(overrides.lang || process.env.TTS_LANG || DEFAULT_LANG),
   };
 }
 
 function cacheVoiceTag(settings = voiceSettings()) {
-  return `edge:${settings.voice}:${settings.pitch}:${settings.rate}`;
+  return `edge:${settings.voice}:${settings.pitch}:${settings.rate}:lang-${settings.lang}`;
+}
+
+function buildSsml(text, { voice, pitch, rate, lang = DEFAULT_LANG } = {}) {
+  // Edge Read Aloud rejects <lang xml:lang> inside the voice (empty audio).
+  // Force French on the speak and voice elements instead. Remy multilingual
+  // still auto-detects English on some names, so the default voice is Henri.
+  const safeLang = escapeSsml(lang || DEFAULT_LANG);
+  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${safeLang}">`
+    + `<voice name="${escapeSsml(voice)}" xml:lang="${safeLang}">`
+    + `<prosody pitch="${escapeSsml(pitch)}" rate="${escapeSsml(rate)}">`
+    + `${escapeSsml(text)}`
+    + `</prosody></voice></speak>`;
 }
 
 function requestId() {
@@ -122,7 +137,7 @@ function synthUrl(id) {
   return `${WSS_URL}?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${sec}&Sec-MS-GEC-Version=${GEC_VERSION}&ConnectionId=${id}`;
 }
 
-function synthesizeOnce(text, { voice, pitch, rate, timeoutMs }) {
+function synthesizeOnce(text, { voice, pitch, rate, lang, timeoutMs }) {
   const id = requestId();
   const chunks = [];
   return new Promise((resolve, reject) => {
@@ -152,10 +167,7 @@ function synthesizeOnce(text, { voice, pitch, rate, timeoutMs }) {
       const config = `Content-Type:application/json; charset=utf-8\r\nPath:speech.config${JSON_XML_DELIM}`
         + '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},'
         + '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
-      const lang = (String(voice).match(/^[a-z]{2}-[A-Z]{2}/) || ['fr-FR'])[0];
-      const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${lang}">`
-        + `<voice name="${escapeSsml(voice)}"><prosody pitch="${escapeSsml(pitch)}" rate="${escapeSsml(rate)}">`
-        + `${escapeSsml(text)}</prosody></voice></speak>`;
+      const ssml = buildSsml(text, { voice, pitch, rate, lang });
       const request = `X-RequestId:${id}\r\nContent-Type:application/ssml+xml\r\nPath:ssml${JSON_XML_DELIM}${ssml}`;
       try {
         ws.send(config);
@@ -182,10 +194,10 @@ function synthesizeOnce(text, { voice, pitch, rate, timeoutMs }) {
 }
 
 async function fetchEdgeTtsMp3(text, dest, timeoutMs = 12_000, overrides = {}) {
-  const { voice, pitch, rate } = voiceSettings(overrides);
+  const { voice, pitch, rate, lang } = voiceSettings(overrides);
   const clipped = String(text);
   async function run() {
-    const buf = await synthesizeOnce(clipped, { voice, pitch, rate, timeoutMs });
+    const buf = await synthesizeOnce(clipped, { voice, pitch, rate, lang, timeoutMs });
     if (!buf || buf.length < 64 || (buf[0] !== 0xff && buf.slice(0, 3).toString() !== 'ID3')) {
       throw new Error('edge tts response is not mp3');
     }
@@ -208,6 +220,8 @@ module.exports = {
   DEFAULT_VOICE,
   DEFAULT_PITCH,
   DEFAULT_RATE,
+  DEFAULT_LANG,
+  buildSsml,
   TRUSTED_CLIENT_TOKEN,
   escapeSsml,
   hashSecMsGecV2,

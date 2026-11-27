@@ -87,7 +87,28 @@ ok(typeof vg.findFfmpeg === 'function', 'findFfmpeg is exported');
 ok(vg.hasFfmpeg() === Boolean(vg.findFfmpeg()), 'hasFfmpeg is existsSync, not a short spawn');
 
 const edge = require(path.join(root, 'edge_tts.js'));
-ok(edge.DEFAULT_VOICE === 'fr-FR-RemyMultilingualNeural', 'default voice is Remy (expressive French male)');
+ok(edge.DEFAULT_VOICE === 'fr-FR-HenriNeural', 'default voice is Henri (monolingual French male)');
+ok(edge.DEFAULT_LANG === 'fr-FR', 'default TTS language is forced French');
+ok(edge.buildSsml('Salut gros con de Dave Ops.', edge.voiceSettings()).includes('xml:lang="fr-FR"'), 'speak element forces fr-FR');
+ok(edge.buildSsml('Salut gros con de Dave Ops.', edge.voiceSettings()).includes('<voice name="fr-FR-HenriNeural" xml:lang="fr-FR">'), 'voice element also forces fr-FR');
+ok(!edge.buildSsml('Salut gros con de Dave Ops.', edge.voiceSettings()).includes('<lang '), 'does not use <lang> which Edge Read Aloud rejects');
+ok(edge.cacheVoiceTag().includes('lang-fr-FR'), 'cache key includes the forced language');
+ok(
+  edge.cacheVoiceTag()
+    !== `edge:${edge.DEFAULT_VOICE}:${edge.DEFAULT_PITCH}:${edge.DEFAULT_RATE}`,
+  'new cache keys do not reuse clips synthesized without the lang wrap',
+);
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'slayer-wipe-'));
+  fs.writeFileSync(path.join(tmp, 'old.ogg'), Buffer.alloc(128));
+  fs.writeFileSync(path.join(tmp, 'old.mp3'), Buffer.alloc(128));
+  const first = vg.wipeStaleTtsCache(tmp, 'tag-v2');
+  ok(first.wiped && first.files === 2 && !fs.existsSync(path.join(tmp, 'old.ogg')), 'wipes old clips when the voice tag changes');
+  const second = vg.wipeStaleTtsCache(tmp, 'tag-v2');
+  ok(!second.wiped && second.files === 0, 'does not wipe again when the voice tag is unchanged');
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
 ok(edge.DEFAULT_PITCH === '+0%', 'default pitch is left natural');
 ok(edge.DEFAULT_RATE === '+0%', 'default rate is left natural');
 ok(

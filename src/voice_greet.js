@@ -203,6 +203,23 @@ function defaultCacheDir() {
   return path.join(os.tmpdir(), 'slayer-tts-cache');
 }
 
+function wipeStaleTtsCache(dir, tag = edgeTts.cacheVoiceTag()) {
+  const marker = path.join(dir, 'voice-tag.txt');
+  let prev = null;
+  try { prev = fs.readFileSync(marker, 'utf8').trim(); } catch { /* missing */ }
+  if (prev === tag) return { wiped: false, prev, tag, files: 0 };
+  let files = 0;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.ogg') && !name.endsWith('.mp3') && !name.endsWith('.pcm')) continue;
+      try { fs.unlinkSync(path.join(dir, name)); files += 1; } catch { /* ignore */ }
+    }
+    fs.writeFileSync(marker, String(tag));
+  } catch { /* ignore */ }
+  return { wiped: true, prev, tag, files };
+}
+
 function evictTtsCache(dir, maxEntries = TTS_CACHE_MAX) {
   try {
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.pcm'));
@@ -907,6 +924,10 @@ function createVoiceGreeter(opts = {}) {
     });
     const ffmpegMs = Date.now() - t0;
     try {
+      const wipe = wipeStaleTtsCache(cacheDir);
+      if (wipe.wiped) {
+        log(`voice-greet cache wipe old_tag=${wipe.prev || 'none'} new_tag=${wipe.tag} files=${wipe.files}`);
+      }
       const r = await withTtsLock(() => ensureCachedAudio(TTS_TEST_PHRASE, { ttsFn, ttsMs, cacheDir }));
       const vs = edgeTts.voiceSettings();
       log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'} format=${r.format || 'ogg-opus'} engine=${r.engine || 'edge'} voice=${vs.voice} pitch=${vs.pitch} rate=${vs.rate}`);
@@ -1091,6 +1112,10 @@ function createVoiceGreeter(opts = {}) {
     prefetchStopped = false;
     prefetchRunning = true;
     prefetchStats.startedAt = nowFn();
+    const wipe = wipeStaleTtsCache(cacheDir);
+    if (wipe.wiped) {
+      log(`voice-greet cache wipe old_tag=${wipe.prev || 'none'} new_tag=${wipe.tag} files=${wipe.files}`);
+    }
     prefetchStats.generated = 0;
     prefetchStats.failed = 0;
     const plan = seedPrefetchQueue();
@@ -1219,6 +1244,7 @@ module.exports = {
   prefetchPriority,
   buildPrefetchPlan,
   withTtsLock,
+  wipeStaleTtsCache,
   TTS_TEST_PHRASE,
   flagOn,
   createVoiceGreeter,
