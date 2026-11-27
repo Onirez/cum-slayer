@@ -130,12 +130,11 @@ ok(
 
 
 ok(vg.DEFAULT_DELAY_MS === 1000, 'default greet delay is 1 second');
-ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 0, botHadToJoin: false, delayMs: 1000, now: 0 }) === 1000, 'waits 1s after arrival when the bot is already in the channel');
-ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 0, botHadToJoin: false, delayMs: 1000, now: 1000 }) === 0, 'does not wait again if a second already passed since arrival');
-ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 200, botHadToJoin: true, delayMs: 1000, now: 200 }) === 1000, 'waits 1s after the bot is ready when it had to join');
-ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 2500, botHadToJoin: true, delayMs: 1000, now: 2500 }) === 1000, 'bot-join wait is measured from connection ready, not from arrival');
-ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 2500, botHadToJoin: false, delayMs: 1000, now: 2500 }) === 0, 'already-present bot does not add a ready delay if arrival was earlier');
-ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 0, botHadToJoin: true, delayMs: 0, now: 0 }) === 0, 'delay can be disabled with 0');
+ok(vg.playWaitMs({ arrivedAt: 0, delayMs: 1000, now: 0 }) === 1000, 'waits 1s after arrival when the bot is already in the channel');
+ok(vg.playWaitMs({ arrivedAt: 0, delayMs: 1000, now: 1000 }) === 0, 'does not wait again if a second already passed since arrival');
+ok(vg.playWaitMs({ arrivedAt: 0, delayMs: 1000, now: 200 }) === 800, 'bot join time counts toward the 1s cap instead of stacking');
+ok(vg.playWaitMs({ arrivedAt: 0, delayMs: 1000, now: 2500 }) === 0, 'plays immediately if joining already took longer than the delay');
+ok(vg.playWaitMs({ arrivedAt: 0, delayMs: 0, now: 0 }) === 0, 'delay can be disabled with 0');
 
 // greeter wiring with fake TTS/play
 const plays = [];
@@ -434,13 +433,17 @@ g2._runQueue().then(async () => {
     sleep: async (ms) => { joinSleeps.push(ms); joinClock.t += ms; },
     getBotId: () => 'bot1',
     log: () => {},
-    fetchTts: async (text, dest) => { fs.writeFileSync(dest, Buffer.from('ID3xxxx')); return dest; },
+    fetchTts: async (text, dest) => {
+      joinClock.t += 600; // bot join / prepare already used 600ms of the 1s cap
+      fs.writeFileSync(dest, Buffer.from('ID3xxxx'));
+      return dest;
+    },
     play: async () => { joinPlays.push(joinClock.t); },
   });
   ok(joinG.handleVoiceStateUpdate({ channelId: null }, member('u-join', 'Sam', false, 'vc1', null)).ok, 'queues a greet when the bot must join');
   await joinG._runQueue();
-  ok(joinSleeps[0] === 1000, `waited 1s after ready when the bot had to join (${joinSleeps[0]})`);
-  ok(joinPlays.length === 1, 'still played after the bot-join delay');
+  ok(joinSleeps[0] === 400, `remaining wait after a 600ms join is 400ms, not another 1s (${joinSleeps[0]})`);
+  ok(joinPlays[0] === 41_000, `playback starts 1s after arrival when the join overlaps the delay (${joinPlays[0]})`);
 
   const leaveClock = { t: 60_000 };
   let leaveChan = 'vc1';

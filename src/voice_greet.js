@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const { Readable } = require('stream');
 const edgeTts = require('./edge_tts');
 
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
@@ -25,11 +26,28 @@ const DEFAULT_PLAY_MS = 30_000;
 const DEFAULT_MAX_QUEUE = 6;
 const DEFAULT_DELAY_MS = 1_000;
 
-function playWaitMs({ arrivedAt, readyAt, botHadToJoin, delayMs, now }) {
+function playWaitMs({ arrivedAt, delayMs, now }) {
+  // Cap the wait from the user's arrival, inclusive of the time spent
+  // joining the channel. Do not add another delay after the bot is ready.
   const delay = Math.max(0, Number(delayMs) || 0);
-  let until = Number(arrivedAt) + delay;
-  if (botHadToJoin) until = Math.max(until, Number(readyAt) + delay);
-  return Math.max(0, until - Number(now));
+  return Math.max(0, Number(arrivedAt) + delay - Number(now));
+}
+
+function pcmSilenceStream(ms, { highWaterMark = 3840 } = {}) {
+  // 20 ms of s16le 48 kHz stereo per chunk.
+  let remaining = Math.max(0, Math.ceil(48_000 * 2 * 2 * (Math.max(0, Number(ms) || 0) / 1000)));
+  return new Readable({
+    highWaterMark,
+    read() {
+      if (remaining <= 0) {
+        this.push(null);
+        return;
+      }
+      const n = Math.min(highWaterMark, remaining);
+      remaining -= n;
+      this.push(Buffer.alloc(n));
+    },
+  });
 }
 
 function resolveUserChannelId(guild, userId) {
@@ -640,7 +658,7 @@ function createVoiceGreeter(opts = {}) {
     return p;
   }
 
-  async function playOnConnection(guildId, audioPath, { pcm = false, format, onPlaying } = {}) {
+  async function playOnConnection(guildId, audioPath, { pcm = false, format, pcmStream, idleMs, onPlaying } = {}) {
     if (typeof playFn === 'function') {
       const start = nowFn();
       const result = await playFn(guildId, audioPath);
@@ -664,6 +682,25 @@ function createVoiceGreeter(opts = {}) {
       }
     }
     if (!connection) throw new Error('no voice connection');
+    const idleTimeout = idleMs != null ? idleMs : playMs;
+    if (pcmStream) {
+      const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      const resource = createAudioResource(pcmStream, {
+        inputType: StreamType.Raw,
+        silencePaddingFrames: 5,
+      });
+      const subscription = connection.subscribe(player);
+      try {
+        player.play(resource);
+        await entersState(player, AudioPlayerStatus.Playing, 15_000);
+        if (typeof onPlaying === 'function') onPlaying();
+        await entersState(player, AudioPlayerStatus.Idle, idleTimeout);
+      } finally {
+        try { player.stop(true); } catch { /* ignore */ }
+        try { subscription?.unsubscribe(); } catch { /* ignore */ }
+      }
+      return;
+    }
     const isOgg = format === 'ogg-opus' || (!pcm && audioPath && String(audioPath).endsWith('.ogg'));
     if (isOgg) {
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
@@ -747,14 +784,27 @@ function createVoiceGreeter(opts = {}) {
             const [ready, prepared] = await Promise.all([readyP, prepareP]);
             if (!ready) throw new Error('audio not ready');
             if (job.userId !== 'debug-test' && delayMs > 0) {
-              const wait = playWaitMs({
-                arrivedAt: job.arrivedAt != null ? job.arrivedAt : tStart,
-                readyAt: nowFn(),
-                botHadToJoin: !alreadyIn,
-                delayMs,
-                now: nowFn(),
-              });
-              if (wait > 0) await sleepFn(wait);
+              const arrivedAt = job.arrivedAt != null ? job.arrivedAt : tStart;
+              const wait = playWaitMs({ arrivedAt, delayMs, now: nowFn() });
+              log(`voice-greet wait user=${job.userId} wait_ms=${wait} delay_ms=${delayMs} since_arrive_ms=${nowFn() - arrivedAt} already_in=${alreadyIn ? 'yes' : 'no'}`);
+              if (wait > 0) {
+                if (typeof playFn === 'function') {
+                  await sleepFn(wait);
+                } else {
+                  // Play silence for the remaining time so the voice
+                  // connection stays active (an idle wait after join
+                  // previously stalled the event loop for several seconds).
+                  try {
+                    await playOnConnection(job.guildId, null, {
+                      pcmStream: pcmSilenceStream(wait),
+                      idleMs: wait + 2_000,
+                    });
+                  } catch (err) {
+                    log(`voice-greet warn: silence wait failed user=${job.userId}: ${err.message}`);
+                    await sleepFn(wait);
+                  }
+                }
+              }
             }
             if (job.userId !== 'debug-test') {
               const currentChan = resolveUserChannelId(guild, job.userId);
