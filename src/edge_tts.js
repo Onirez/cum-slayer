@@ -20,12 +20,11 @@ const WIN_EPOCH = 11644473600;
 const AUDIO_DELIM = Buffer.from('Path:audio\r\n');
 const JSON_XML_DELIM = '\r\n\r\n';
 
-// Henri is the standard French (France) male voice, around 124 Hz at default
-// pitch: natural and pleasant, not too deep and not too high. Remy at 0% is
-// still darker (~109 Hz). Rate is slightly up so short greetings stay quick.
-const DEFAULT_VOICE = 'fr-FR-HenriNeural';
+// Remy multilingual is more expressive and natural than Henri, which sounded
+// robotic. Use default pitch (lowered pitch was too deep) and a natural rate.
+const DEFAULT_VOICE = 'fr-FR-RemyMultilingualNeural';
 const DEFAULT_PITCH = '+0%';
-const DEFAULT_RATE = '+5%';
+const DEFAULT_RATE = '+0%';
 
 const SWAP_FIRST_WORD = { swappedWord: 0xEF0569FB, swappedSum: 0x76F50F34, swappedProduct: 0xC3EFEA97 };
 const SWAP_SECOND_WORD = { swappedWord: 0xC31713DB, swappedSum: 0x1881CE3C, swappedProduct: 0x35BD1EC9 };
