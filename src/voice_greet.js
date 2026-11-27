@@ -576,7 +576,10 @@ function createVoiceGreeter(opts = {}) {
     for (const guildId of [...joinedAt.keys()]) destroyConnection(guildId);
   }
 
+  const hookedConnections = new WeakSet();
   function hookConnection(connection, guildId) {
+    if (!connection || hookedConnections.has(connection)) return;
+    hookedConnections.add(connection);
     const { VoiceConnectionStatus } = loadVoiceLib();
     const onErr = (err) => {
       log(`voice-greet warn: connection error guild=${guildId}: ${err?.message || err}`);
@@ -585,7 +588,12 @@ function createVoiceGreeter(opts = {}) {
     connection.on('error', onErr);
     connection.on('stateChange', (_old, next) => {
       if (next.status === VoiceConnectionStatus.Disconnected) {
-        try { connection.destroy(); } catch { /* ignore */ }
+        // Forced move/kick (close 4014) lands here. destroy() would send
+        // channel_id=null and leave voice; auto-voice should move or rejoin
+        // instead. leave() still destroys when every channel is empty.
+        if (typeof opts.onDisconnected === 'function') {
+          try { opts.onDisconnected(guildId, next); } catch { /* ignore */ }
+        }
       }
     });
   }
@@ -620,11 +628,31 @@ function createVoiceGreeter(opts = {}) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const existing = getVoiceConnection(guild.id);
-        if (existing && sameChannel(existing, channel.id)) {
+        const existingOk = existing && existing.state.status !== VoiceConnectionStatus.Destroyed;
+        if (existingOk && sameChannel(existing, channel.id)) {
           const st = existing.state.status;
           if (st === VoiceConnectionStatus.Ready) return true;
           if (st === VoiceConnectionStatus.Signalling || st === VoiceConnectionStatus.Connecting) {
             await waitReady(existing, `wait-${attempt}`);
+            return true;
+          }
+        }
+        // Rejoin/move without destroy(): destroy() sends channel_id=null and
+        // the bot leaves voice. joinVoiceChannel would also rejoin when the
+        // connection is already Disconnected, but rejoin() updates joinConfig
+        // for a Ready connection that was moved under us.
+        if (existingOk && typeof existing.rejoin === 'function') {
+          const rejoined = existing.rejoin({
+            channelId: channel.id,
+            selfDeaf: true,
+            selfMute: false,
+          });
+          if (rejoined) {
+            hookConnection(existing, guild.id);
+            if (existing.state.status === VoiceConnectionStatus.Ready && sameChannel(existing, channel.id)) {
+              return true;
+            }
+            await waitReady(existing, `rejoin-${attempt}`);
             return true;
           }
         }

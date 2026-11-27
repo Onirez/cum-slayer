@@ -25,6 +25,7 @@ const lifetime = require('./lifetime');
 const statsRender = require('./stats_render');
 const followMod = require('./follow');
 const voiceGreet = require('./voice_greet');
+const autoVoicePolicy = require('./auto_voice_policy');
 const config = require('./config');
 const CREATOR_USER_ID = config.CREATOR_ID;
 const followSessions = new followMod.FollowSessions({
@@ -78,6 +79,7 @@ const ALLOW_DMS = config.ALLOW_DMS;
 const AUTO_VOICE = config.AUTO_VOICE;
 const AUTO_VOICE_DEBOUNCE_MS = config.AUTO_VOICE_DEBOUNCE_MS;
 const AUTO_VOICE_RESYNC_MS = config.AUTO_VOICE_RESYNC_MS;
+const AUTO_VOICE_RETURN_MS = config.AUTO_VOICE_RETURN_MS;
 const VOICE_GREET = config.VOICE_GREET;
 const VOICE_GREET_COOLDOWN_MS = config.VOICE_GREET_COOLDOWN_MS;
 const VOICE_GREET_GRACE_MS = config.VOICE_GREET_GRACE_MS;
@@ -654,6 +656,11 @@ const voiceGreeter = voiceGreet.createVoiceGreeter({
   onQueueIdle: () => {
     if (AUTO_VOICE) scheduleAutoVoice('greet-idle');
   },
+  onDisconnected: (guildId) => {
+    if (!AUTO_VOICE) return;
+    const guild = client.guilds.cache.get(guildId);
+    if (guild) handleBotVoiceDisplacement(guild, botVoiceChannelId(guild), 'disconnected');
+  },
   getPrefetchMembers: collectPrefetchMembers,
   getRecentUserIds: collectRecentUserIds,
 });
@@ -885,6 +892,53 @@ function syncAutoVoice(reason) {
   }
 }
 
+const autoVoiceReturnTimers = new Map(); // guildId -> timer
+
+function isBotInitiatedVoiceChange(guild, newChannelId) {
+  if (autoVoicePolicy.isRecentBotVoiceCommand(autoVoiceLastSent.get(guild.id), newChannelId, Date.now())) {
+    return true;
+  }
+  if (newChannelId && autoVoiceAsserted.get(guild.id) === newChannelId) return true;
+  const held = typeof voiceGreeter.heldChannel === 'function' ? voiceGreeter.heldChannel(guild.id) : null;
+  return Boolean(held && held === newChannelId);
+}
+
+function scheduleAutoVoiceReturn(guild, reason) {
+  const prev = autoVoiceReturnTimers.get(guild.id);
+  if (prev) clearTimeout(prev);
+  const timer = setTimeout(() => {
+    autoVoiceReturnTimers.delete(guild.id);
+    try {
+      syncAutoVoiceGuild(guild, reason);
+    } catch (err) {
+      log(`auto-voice return error guild=${guild.id} reason=${reason}: ${err.message}`);
+    }
+  }, AUTO_VOICE_RETURN_MS);
+  if (typeof timer.unref === 'function') timer.unref();
+  autoVoiceReturnTimers.set(guild.id, timer);
+}
+
+function handleBotVoiceDisplacement(guild, destChannelId, source) {
+  if (!guild || !AUTO_VOICE) return false;
+  const initiatedByBot = isBotInitiatedVoiceChange(guild, destChannelId);
+  const pick = pickTargetChannel(guild);
+  const destHumans = destChannelId ? (pick.counts.get(destChannelId) || 0) : 0;
+  const decision = autoVoicePolicy.decideForcedBotVoice({
+    initiatedByBot,
+    destChannelId,
+    destHumans,
+    targetId: pick.targetId,
+    targetHumans: pick.targetCount,
+  });
+  if (decision.action !== 'return') return false;
+  const from = destChannelId || 'none';
+  log(
+    `auto-voice return scheduled guild=${guild.id} from=${from} to=${decision.targetId} humans=${pick.targetCount} reason=${decision.reason} source=${source} in_ms=${AUTO_VOICE_RETURN_MS} counts=${formatVoiceCounts(guild, pick.counts)}`,
+  );
+  scheduleAutoVoiceReturn(guild, decision.reason);
+  return true;
+}
+
 function scheduleAutoVoice(reason) {
   if (!AUTO_VOICE) return;
   if (autoVoiceTimer) clearTimeout(autoVoiceTimer);
@@ -920,6 +974,8 @@ function stopAutoVoice() {
     clearInterval(autoVoiceInterval);
     autoVoiceInterval = null;
   }
+  for (const timer of autoVoiceReturnTimers.values()) clearTimeout(timer);
+  autoVoiceReturnTimers.clear();
 }
 
 
@@ -1267,7 +1323,15 @@ client.on('shardResume', (id) => {
 client.on('voiceStateUpdate', (oldState, newState) => {
   const guildId = newState.guild?.id || oldState.guild?.id;
   if (!guildId || !allowedGuilds.has(guildId)) return;
-  if (AUTO_VOICE) scheduleAutoVoice('voiceStateUpdate');
+  if (AUTO_VOICE) {
+    const botId = client.user?.id;
+    const memberId = newState.id || oldState.id;
+    if (botId && memberId === botId && (oldState.channelId || null) !== (newState.channelId || null)) {
+      const guild = newState.guild || oldState.guild;
+      if (guild) handleBotVoiceDisplacement(guild, newState.channelId || null, 'voiceStateUpdate');
+    }
+    scheduleAutoVoice('voiceStateUpdate');
+  }
   if (VOICE_GREET) {
     try { voiceGreeter.handleVoiceStateUpdate(oldState, newState); } catch (err) {
       log(`voice-greet warn: ${err.message}`);

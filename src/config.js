@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const autoVoicePolicy = require('./auto_voice_policy');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -101,6 +102,7 @@ const config = {
   FOLLOW_HOURLY_MS: Number(process.env.FOLLOW_HOURLY_MS || 3_600_000),
   AUTO_VOICE_DEBOUNCE_MS: Number(process.env.AUTO_VOICE_DEBOUNCE_MS || 5_000),
   AUTO_VOICE_RESYNC_MS: Number(process.env.AUTO_VOICE_RESYNC_MS || 60_000),
+  AUTO_VOICE_RETURN_MS: autoVoicePolicy.parseReturnMs(process.env.AUTO_VOICE_RETURN_MS),
   VOICE_GREET: flagOn('VOICE_GREET', 'on'),
   VOICE_GREET_COOLDOWN_MS: Number(process.env.VOICE_GREET_COOLDOWN_MS ?? 0),
   VOICE_GREET_GRACE_MS: Number(process.env.VOICE_GREET_GRACE_MS || 8_000),
