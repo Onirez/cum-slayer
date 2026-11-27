@@ -84,9 +84,9 @@ ok(typeof vg.findFfmpeg === 'function', 'findFfmpeg is exported');
 ok(vg.hasFfmpeg() === Boolean(vg.findFfmpeg()), 'hasFfmpeg is existsSync, not a short spawn');
 
 const edge = require(path.join(root, 'edge_tts.js'));
-ok(edge.DEFAULT_VOICE === 'fr-FR-RemyMultilingualNeural', 'default voice is Remy (deeper French male)');
-ok(edge.DEFAULT_PITCH === '-25%', 'default pitch is lowered 25%');
-ok(edge.DEFAULT_RATE === '+10%', 'default rate is slightly faster');
+ok(edge.DEFAULT_VOICE === 'fr-FR-HenriNeural', 'default voice is Henri (natural French male)');
+ok(edge.DEFAULT_PITCH === '+0%', 'default pitch is left natural');
+ok(edge.DEFAULT_RATE === '+5%', 'default rate is slightly faster');
 ok(
   edge.secMsGecFromUnixSeconds(1791888000) === '492D7694A183A45E-56E821F95D4579C5B7C7E33DC7303FF379EC36D510213555BBBB9EB17EF15876',
   'Sec-MS-GEC v2 matches the known test vector',
