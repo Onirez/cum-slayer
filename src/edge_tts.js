@@ -20,10 +20,10 @@ const WIN_EPOCH = 11644473600;
 const AUDIO_DELIM = Buffer.from('Path:audio\r\n');
 const JSON_XML_DELIM = '\r\n\r\n';
 
-// Remy is the deeper French male voice (~97 Hz after a -15% pitch shift,
+// Remy is the deeper French male voice (~88 Hz after a -25% pitch shift,
 // versus Henri at ~111 Hz). Rate is slightly up so short greetings stay quick.
 const DEFAULT_VOICE = 'fr-FR-RemyMultilingualNeural';
-const DEFAULT_PITCH = '-15%';
+const DEFAULT_PITCH = '-25%';
 const DEFAULT_RATE = '+10%';
 
 const SWAP_FIRST_WORD = { swappedWord: 0xEF0569FB, swappedSum: 0x76F50F34, swappedProduct: 0xC3EFEA97 };
