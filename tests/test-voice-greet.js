@@ -65,6 +65,7 @@ const base = {
   now: 1_000_000,
   joinedAt: 0,
   graceMs: 8_000,
+  delayMs: 0,
   cooldownUntil: 0,
 };
 ok(vg.shouldGreet(base).ok, 'greets a user who just joined the bot channel');
@@ -127,12 +128,22 @@ ok(
 }
 
 
+
+ok(vg.DEFAULT_DELAY_MS === 1000, 'default greet delay is 1 second');
+ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 0, botHadToJoin: false, delayMs: 1000, now: 0 }) === 1000, 'waits 1s after arrival when the bot is already in the channel');
+ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 0, botHadToJoin: false, delayMs: 1000, now: 1000 }) === 0, 'does not wait again if a second already passed since arrival');
+ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 200, botHadToJoin: true, delayMs: 1000, now: 200 }) === 1000, 'waits 1s after the bot is ready when it had to join');
+ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 2500, botHadToJoin: true, delayMs: 1000, now: 2500 }) === 1000, 'bot-join wait is measured from connection ready, not from arrival');
+ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 2500, botHadToJoin: false, delayMs: 1000, now: 2500 }) === 0, 'already-present bot does not add a ready delay if arrival was earlier');
+ok(vg.playWaitMs({ arrivedAt: 0, readyAt: 0, botHadToJoin: true, delayMs: 0, now: 0 }) === 0, 'delay can be disabled with 0');
+
 // greeter wiring with fake TTS/play
 const plays = [];
 const greeter = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => 5_000_000,
   getBotId: () => 'bot1',
   log: () => {},
@@ -160,6 +171,7 @@ const tooSoon = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => 5_000_000,
   getBotId: () => 'bot1',
   log: () => {},
@@ -175,6 +187,7 @@ const later = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: (() => { let t = 20_000_000; return () => t; })(),
   getBotId: () => 'bot1',
   log: () => {},
@@ -191,6 +204,7 @@ const g2 = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => seq.t,
   getBotId: () => 'bot1',
   log: () => {},
@@ -215,6 +229,7 @@ const noReset = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => graceClock.t,
   getBotId: () => 'bot1',
   log: () => {},
@@ -236,6 +251,7 @@ const logger = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => logClock.t,
   getBotId: () => 'bot1',
   log: (m) => skips.push(m),
@@ -264,6 +280,7 @@ const hopper = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => 20_000,
   getBotId: () => 'bot1',
   log: (m) => hopLogs.push(m),
@@ -285,6 +302,7 @@ const lonely = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => 20_000,
   getBotId: () => 'bot1',
   log: (m) => noBotLogs.push(m),
@@ -315,6 +333,7 @@ const flaky = vg.createVoiceGreeter({
   enabled: true,
   cooldownMs: 10 * 60 * 1000,
   graceMs: 8_000,
+  delayMs: 0,
   now: () => failClock.t,
   getBotId: () => 'bot1',
   log: () => {},
@@ -347,6 +366,7 @@ g2._runQueue().then(async () => {
     enabled: true,
     cooldownMs: 10 * 60 * 1000,
     graceMs: 8_000,
+  delayMs: 0,
     now: () => cdClock.t,
     getBotId: () => 'bot1',
     log: () => {},
@@ -378,6 +398,87 @@ g2._runQueue().then(async () => {
   ok(cdg.heldChannel('g1') == null, 'hold is released after the queue drains');
 
   // leftover tmp files should be deleted
+
+  const delayClock = { t: 20_000 };
+  const delayPlays = [];
+  const delaySleeps = [];
+  const delayLogs = [];
+  const delayG = vg.createVoiceGreeter({
+    enabled: true,
+    cooldownMs: 10 * 60 * 1000,
+    graceMs: 8_000,
+    delayMs: 1000,
+    now: () => delayClock.t,
+    sleep: async (ms) => { delaySleeps.push(ms); delayClock.t += ms; },
+    getBotId: () => 'bot1',
+    log: (m) => delayLogs.push(m),
+    fetchTts: async (text, dest) => { fs.writeFileSync(dest, Buffer.from('ID3xxxx')); return dest; },
+    play: async () => { delayPlays.push(delayClock.t); },
+  });
+  delayG.markJoined('g1', 'vc1');
+  delayClock.t = 20_000;
+  ok(delayG.handleVoiceStateUpdate({ channelId: null }, member('u-wait', 'Sam')).ok, 'queues a greet that should wait 1s');
+  await delayG._runQueue();
+  ok(delaySleeps[0] === 1000, `waited 1s after arrival when the bot was already in the channel (${delaySleeps[0]})`);
+  ok(delayPlays[0] === 21_000, `playback started after the 1s delay (${delayPlays[0]})`);
+
+  const joinClock = { t: 40_000 };
+  const joinSleeps = [];
+  const joinPlays = [];
+  const joinG = vg.createVoiceGreeter({
+    enabled: true,
+    cooldownMs: 10 * 60 * 1000,
+    graceMs: 8_000,
+    delayMs: 1000,
+    now: () => joinClock.t,
+    sleep: async (ms) => { joinSleeps.push(ms); joinClock.t += ms; },
+    getBotId: () => 'bot1',
+    log: () => {},
+    fetchTts: async (text, dest) => { fs.writeFileSync(dest, Buffer.from('ID3xxxx')); return dest; },
+    play: async () => { joinPlays.push(joinClock.t); },
+  });
+  ok(joinG.handleVoiceStateUpdate({ channelId: null }, member('u-join', 'Sam', false, 'vc1', null)).ok, 'queues a greet when the bot must join');
+  await joinG._runQueue();
+  ok(joinSleeps[0] === 1000, `waited 1s after ready when the bot had to join (${joinSleeps[0]})`);
+  ok(joinPlays.length === 1, 'still played after the bot-join delay');
+
+  const leaveClock = { t: 60_000 };
+  let leaveChan = 'vc1';
+  const leavePlays = [];
+  const leaveLogs = [];
+  const leaveG = vg.createVoiceGreeter({
+    enabled: true,
+    cooldownMs: 10 * 60 * 1000,
+    graceMs: 8_000,
+    delayMs: 1000,
+    now: () => leaveClock.t,
+    sleep: async (ms) => { leaveChan = null; leaveClock.t += ms; },
+    getBotId: () => 'bot1',
+    getGuild: () => ({
+      id: 'g1',
+      voiceStates: {
+        cache: {
+          get: (uid) => {
+            if (uid === 'bot1') return { channelId: 'vc1' };
+            if (uid === 'u-leave') return leaveChan ? { channelId: leaveChan } : null;
+            return null;
+          },
+        },
+      },
+      channels: { cache: { get: (idc) => (idc === 'vc1' ? { id: idc, type: 2 } : null) } },
+    }),
+    log: (m) => leaveLogs.push(m),
+    fetchTts: async (text, dest) => { fs.writeFileSync(dest, Buffer.from('ID3xxxx')); return dest; },
+    play: async () => { leavePlays.push(leaveClock.t); },
+  });
+  leaveG.markJoined('g1', 'vc1');
+  ok(leaveG.handleVoiceStateUpdate({ channelId: null }, member('u-leave', 'Sam')).ok, 'queues a greet that will leave during the delay');
+  await leaveG._runQueue();
+  ok(leavePlays.length === 0, 'does not play if the user left during the delay');
+  ok(leaveLogs.some((m) => m.includes('reason=left-before-play')), 'logs left-before-play when the user is gone after the delay');
+  const leftAgain = leaveG.handleVoiceStateUpdate({ channelId: null }, member('u-leave', 'Sam'));
+  ok(leftAgain.ok, 'no cooldown is armed when playback was skipped because the user left');
+
 
   if (vg.hasFfmpeg()) {
     const os = require('os');
@@ -412,6 +513,7 @@ g2._runQueue().then(async () => {
       enabled: true,
       prefetchEnabled: true,
       prefetchGapMs: 20,
+      delayMs: 0,
       cacheDir: memberDir,
       log: () => {},
       fetchTts: async (_text, dest) => { fs.copyFileSync(srcMp3, dest); return dest; },

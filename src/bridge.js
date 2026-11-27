@@ -81,6 +81,7 @@ const AUTO_VOICE_RESYNC_MS = config.AUTO_VOICE_RESYNC_MS;
 const VOICE_GREET = config.VOICE_GREET;
 const VOICE_GREET_COOLDOWN_MS = config.VOICE_GREET_COOLDOWN_MS;
 const VOICE_GREET_GRACE_MS = config.VOICE_GREET_GRACE_MS;
+const VOICE_GREET_DELAY_MS = config.VOICE_GREET_DELAY_MS;
 const VOICE_CHANNEL_TYPE = 2;
 const STAGE_CHANNEL_TYPE = 13;
 const VOICE_TYPES = new Set([VOICE_CHANNEL_TYPE, STAGE_CHANNEL_TYPE]);
@@ -634,6 +635,7 @@ const voiceGreeter = voiceGreet.createVoiceGreeter({
   enabled: VOICE_GREET,
   cooldownMs: VOICE_GREET_COOLDOWN_MS,
   graceMs: VOICE_GREET_GRACE_MS,
+  delayMs: VOICE_GREET_DELAY_MS,
   log,
   getBotId: () => client.user?.id || null,
   getGuild: (id) => client.guilds.cache.get(id) || null,

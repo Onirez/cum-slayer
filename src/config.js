@@ -104,6 +104,7 @@ const config = {
   VOICE_GREET: flagOn('VOICE_GREET', 'on'),
   VOICE_GREET_COOLDOWN_MS: Number(process.env.VOICE_GREET_COOLDOWN_MS || 10 * 60 * 1000),
   VOICE_GREET_GRACE_MS: Number(process.env.VOICE_GREET_GRACE_MS || 8_000),
+  VOICE_GREET_DELAY_MS: Number(process.env.VOICE_GREET_DELAY_MS ?? 1_000),
 
   flagOn,
   env,

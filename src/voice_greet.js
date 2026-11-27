@@ -23,6 +23,21 @@ const DEFAULT_TTS_MS = 12_000;
 const DEFAULT_GOOGLE_TTS_MS = 8_000;
 const DEFAULT_PLAY_MS = 30_000;
 const DEFAULT_MAX_QUEUE = 6;
+const DEFAULT_DELAY_MS = 1_000;
+
+function playWaitMs({ arrivedAt, readyAt, botHadToJoin, delayMs, now }) {
+  const delay = Math.max(0, Number(delayMs) || 0);
+  let until = Number(arrivedAt) + delay;
+  if (botHadToJoin) until = Math.max(until, Number(readyAt) + delay);
+  return Math.max(0, until - Number(now));
+}
+
+function resolveUserChannelId(guild, userId) {
+  if (!guild || !guild.voiceStates) return undefined;
+  const vs = guild.voiceStates.cache?.get(userId);
+  return vs?.channelId || null;
+}
+
 const AUDIO_RETRY_MS = 30 * 1000;
 const TTS_MAX_CHARS = 180;
 const TTS_TEST_PHRASE = 'Test audio. Un, deux, trois.';
@@ -443,8 +458,13 @@ function createVoiceGreeter(opts = {}) {
   const ttsMs = Number(opts.ttsMs || DEFAULT_TTS_MS);
   const playMs = Number(opts.playMs || DEFAULT_PLAY_MS);
   const maxQueue = Number(opts.maxQueue || DEFAULT_MAX_QUEUE);
+  const delayRaw = opts.delayMs != null ? opts.delayMs : (process.env.VOICE_GREET_DELAY_MS ?? DEFAULT_DELAY_MS);
+  const delayMs = Number.isFinite(Number(delayRaw)) && Number(delayRaw) >= 0 ? Number(delayRaw) : DEFAULT_DELAY_MS;
   const sendVoiceStateUpdate = opts.sendVoiceStateUpdate || (() => {});
   const nowFn = opts.now || (() => Date.now());
+  const sleepFn = typeof opts.sleep === 'function'
+    ? opts.sleep
+    : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const ttsFn = opts.fetchTts || ((text, dest, ms) => fetchTtsMp3(text, dest, ms, { log }));
   const playFn = opts.play; // optional inject for tests
   const tmpDir = opts.tmpDir || path.join(os.tmpdir(), 'slayer-tts');
@@ -698,7 +718,6 @@ function createVoiceGreeter(opts = {}) {
         while (queue.length) {
           const job = queue.shift();
           currentJob = job;
-          queuedUsers.delete(job.userId);
           const tmp = path.join(tmpDir, `greet-${job.userId}-${nowFn()}.mp3`);
           const tStart = nowFn();
           let startMs = null;
@@ -706,9 +725,16 @@ function createVoiceGreeter(opts = {}) {
             fs.mkdirSync(tmpDir, { recursive: true });
             const guild = opts.getGuild ? opts.getGuild(job.guildId) : null;
             const channel = guild?.channels?.cache?.get(job.channelId);
-            const readyP = (guild && channel)
-              ? ensureAudio(guild, channel, { force: false })
-              : Promise.resolve(true);
+            const alreadyIn = Boolean(
+              (guild && botChannel(guild) === job.channelId)
+              || (!guild && job.botAlreadyIn),
+            );
+            // Injected play() (unit tests) skips a real voice connect.
+            const readyP = (typeof playFn === 'function')
+              ? Promise.resolve(true)
+              : (guild && channel)
+                ? ensureAudio(guild, channel, { force: false })
+                : Promise.resolve(true);
             // Injected play() (unit tests) still receives the mp3 path.
             const prepareP = typeof playFn === 'function'
               ? ttsFn(job.text, tmp, ttsMs).then(() => ({ path: tmp, pcm: false, cached: false, ttsMs: 0, transcodeMs: 0 }))
@@ -720,6 +746,23 @@ function createVoiceGreeter(opts = {}) {
               }));
             const [ready, prepared] = await Promise.all([readyP, prepareP]);
             if (!ready) throw new Error('audio not ready');
+            if (job.userId !== 'debug-test' && delayMs > 0) {
+              const wait = playWaitMs({
+                arrivedAt: job.arrivedAt != null ? job.arrivedAt : tStart,
+                readyAt: nowFn(),
+                botHadToJoin: !alreadyIn,
+                delayMs,
+                now: nowFn(),
+              });
+              if (wait > 0) await sleepFn(wait);
+            }
+            if (job.userId !== 'debug-test') {
+              const currentChan = resolveUserChannelId(guild, job.userId);
+              if (currentChan !== undefined && currentChan !== job.channelId) {
+                log(`voice-greet skip user=${job.userId} old=${job.channelId || 'none'} new=${currentChan || 'none'} reason=left-before-play`);
+                continue;
+              }
+            }
             await playOnConnection(job.guildId, prepared.path, {
               pcm: prepared.pcm,
               format: prepared.format,
@@ -745,6 +788,7 @@ function createVoiceGreeter(opts = {}) {
           } catch (err) {
             log(`voice-greet warn: play failed user=${job.userId}: ${err.message}`);
           } finally {
+            queuedUsers.delete(job.userId);
             if (currentJob === job) currentJob = null;
             try { fs.unlinkSync(tmp); } catch { /* ignore */ }
           }
@@ -850,10 +894,13 @@ function createVoiceGreeter(opts = {}) {
       const relevant = oldChannelId === botChannelId || newChannelId === botChannelId || channelChanged;
       if (!decision.ok) {
         if (decision.reason === 'already-queued' && newChannelId) {
-          const job = queue.find((j) => j.userId === userId && j.guildId === guild.id);
+          const job = queue.find((j) => j.userId === userId && j.guildId === guild.id)
+            || (currentJob && currentJob.userId === userId && currentJob.guildId === guild.id ? currentJob : null);
           if (job && job.channelId !== newChannelId) {
             const prevChan = job.channelId;
             job.channelId = newChannelId;
+            job.arrivedAt = now;
+            job.botAlreadyIn = botChannelId === newChannelId;
             log(`voice-greet retarget user=${userId} old=${oldChannelId || 'none'} from=${prevChan} new=${newChannelId}`);
             return { ok: true, retargeted: true };
           }
@@ -885,6 +932,8 @@ function createVoiceGreeter(opts = {}) {
         channelId: newChannelId,
         text: picked.text,
         isBot: Boolean(user?.bot || member?.user?.bot),
+        arrivedAt: now,
+        botAlreadyIn: botChannelId === newChannelId,
       });
       const follow = botChannelId && botChannelId !== newChannelId ? 'yes' : 'no';
       log(`voice-greet queued user=${userId} bot=${user?.bot ? 'yes' : 'no'} q=${queue.length} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} botchan=${botChannelId || 'none'} from_move=${oldChannelId && oldChannelId !== newChannelId ? 'yes' : 'no'} follow=${follow}`);
@@ -1070,6 +1119,7 @@ function createVoiceGreeter(opts = {}) {
     enabled,
     cooldownMs,
     graceMs,
+    delayMs,
     markJoined,
     leave,
     shutdown,
@@ -1092,6 +1142,8 @@ module.exports = {
   GREETINGS,
   DEFAULT_COOLDOWN_MS,
   DEFAULT_GRACE_MS,
+  DEFAULT_DELAY_MS,
+  playWaitMs,
   cleanName,
   fillPhrase,
   pickPhrase,
