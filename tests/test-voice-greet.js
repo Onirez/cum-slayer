@@ -76,11 +76,12 @@ ok(vg.shouldGreet({ ...base, oldChannelId: 'vc-other' }).ok, 'greets a move from
 ok(vg.shouldGreet({ ...base, oldChannelId: 'vc1' }).reason === 'no-channel-change', 'skips mute/deaf toggles');
 ok(vg.shouldGreet({ ...base, channelType: 13 }).reason === 'not-voice', 'skips stage channels');
 ok(vg.shouldGreet({ ...base, joinedAt: 999_000, graceMs: 8_000 }).ok, 'an arrival is not blocked by bot-join grace');
-ok(vg.shouldGreet({ ...base, cooldownUntil: 2_000_000 }).reason === 'cooldown', 'honors per-user-per-channel cooldown');
+ok(vg.DEFAULT_COOLDOWN_MS === 0, 'cooldown is off by default');
+ok(vg.shouldGreet({ ...base, cooldownUntil: 2_000_000 }).reason === 'cooldown', 'still honors a cooldown when one is configured');
 ok(vg.shouldGreet({ ...base, queueUserIds: new Set(['user1']) }).reason === 'already-queued', 'does not double-queue');
 // bots ARE greeted
 ok(vg.shouldGreet({ ...base, userId: 'otherbot' }).ok, 'greets other bots (no bot-user skip in shouldGreet)');
-ok(vg.cooldownKey('u1', 'vc2') === 'u1:vc2', 'cooldown key is per user per channel');
+ok(vg.cooldownKey('u1', 'vc2') === 'u1:vc2', 'cooldown key is per user per channel when enabled');
 
 ok(typeof vg.findFfmpeg === 'function', 'findFfmpeg is exported');
 ok(vg.hasFfmpeg() === Boolean(vg.findFfmpeg()), 'hasFfmpeg is existsSync, not a short spawn');
@@ -381,7 +382,7 @@ g2._runQueue().then(async () => {
   ok(cdPlays.length === 1, 'played the first vc1 greet');
   ok(idle.length === 1, 'notifies auto-voice when the greet queue is idle');
   const sameChan = cdg.handleVoiceStateUpdate({ channelId: null }, member('u-cd', 'Sam'));
-  ok(sameChan.reason === 'cooldown', 'same user in the same channel stays on the 10 min cooldown');
+  ok(sameChan.reason === 'cooldown', 'when a cooldown is configured, same user in the same channel stays on it');
   const otherChan = cdg.handleVoiceStateUpdate(
     { ...member('u-cd', 'Sam'), channelId: 'vc1' },
     member('u-cd', 'Sam', false, 'vc2'),
@@ -393,8 +394,45 @@ g2._runQueue().then(async () => {
     { ...member('u-cd', 'Sam', false, 'vc2'), channelId: 'vc2' },
     member('u-cd', 'Sam', false, 'vc1'),
   );
-  ok(back.reason === 'cooldown', 'returning to a channel already greeted stays on cooldown');
+  ok(back.reason === 'cooldown', 'when a cooldown is configured, returning too soon stays on it');
   ok(cdg.heldChannel('g1') == null, 'hold is released after the queue drains');
+
+  const noCdClock = { t: 20_000 };
+  const noCdPlays = [];
+  const noCd = vg.createVoiceGreeter({
+    enabled: true,
+    cooldownMs: 0,
+    graceMs: 8_000,
+    delayMs: 0,
+    now: () => noCdClock.t,
+    getBotId: () => 'bot1',
+    log: () => {},
+    fetchTts: async (text, dest) => { fs.writeFileSync(dest, Buffer.from('ID3xxxx')); return dest; },
+    play: async () => { noCdPlays.push(noCdClock.t); },
+  });
+  noCdClock.t = 1_000;
+  noCd.markJoined('g1', 'vc1');
+  noCdClock.t = 20_000;
+  ok(noCd.handleVoiceStateUpdate({ channelId: null }, member('u-nocd', 'Sam')).ok, 'queues a join with cooldown disabled');
+  await noCd._runQueue();
+  ok(noCdPlays.length === 1, 'played the first greet with cooldown disabled');
+  const rejoin = noCd.handleVoiceStateUpdate({ channelId: null }, member('u-nocd', 'Sam'));
+  ok(rejoin.ok, 'same user can be greeted again on a later join when cooldown is 0');
+  await noCd._runQueue();
+  ok(noCdPlays.length === 2, 'played the second join in the same channel');
+  const moved = noCd.handleVoiceStateUpdate(
+    { ...member('u-nocd', 'Sam'), channelId: 'vc1' },
+    member('u-nocd', 'Sam', false, 'vc2'),
+  );
+  ok(moved.ok, 'a move is greeted when cooldown is 0');
+  const movedAgain = noCd.handleVoiceStateUpdate(
+    { ...member('u-nocd', 'Sam', false, 'vc2'), channelId: 'vc2' },
+    member('u-nocd', 'Sam', false, 'vc1'),
+  );
+  ok(movedAgain.retargeted, 'a second move while queued retargets instead of stacking a duplicate');
+  ok(noCd._queue.length === 1 && noCd._queue[0].channelId === 'vc1', 'pending greet follows the newest channel');
+  await noCd._runQueue();
+  ok(noCdPlays.length === 3, 'played the retargeted greet once');
 
   // leftover tmp files should be deleted
 

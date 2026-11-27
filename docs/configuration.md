@@ -27,7 +27,7 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | `ALLOW_DMS` | `1` | Accepter les DM de quiconque écrit au bot (pas seulement les membres) |
 | `AUTO_VOICE` | `on` | Rejoindre le vocal le plus rempli |
 | `VOICE_GREET` | `on` | Saluer à voix haute ceux qui rejoignent le salon du bot |
-| `VOICE_GREET_COOLDOWN_MS` | `600000` | Cooldown entre deux saluts d’une même personne (~10 min) |
+| `VOICE_GREET_COOLDOWN_MS` | `0` | Cooldown entre deux saluts d’une même personne et un même salon (0 = désactivé, chaque join/move est salué) |
 | `VOICE_GREET_GRACE_MS` | `8000` | Ne pas saluer juste après que le bot ait lui-même rejoint |
 | `VOICE_GREET_DELAY_MS` | `1000` | Délai max entre l’arrivée et le son (le temps de join du bot est inclus, pas ajouté) |
 | `DAILY_ROAST` | `on` | Activer le roast du jour |

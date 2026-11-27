@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { Readable } = require('stream');
 const edgeTts = require('./edge_tts');
 
-const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_COOLDOWN_MS = 0;
 const DEFAULT_GRACE_MS = 8_000;
 const DEFAULT_CONNECT_MS = 20_000;
 const DEFAULT_TTS_MS = 12_000;
@@ -470,7 +470,8 @@ function shouldGreet(event) {
 function createVoiceGreeter(opts = {}) {
   const log = typeof opts.log === 'function' ? opts.log : () => {};
   const enabled = opts.enabled !== undefined ? Boolean(opts.enabled) : true;
-  const cooldownMs = Number(opts.cooldownMs || DEFAULT_COOLDOWN_MS);
+  const cooldownRaw = opts.cooldownMs != null ? opts.cooldownMs : (process.env.VOICE_GREET_COOLDOWN_MS ?? DEFAULT_COOLDOWN_MS);
+  const cooldownMs = Number.isFinite(Number(cooldownRaw)) && Number(cooldownRaw) >= 0 ? Number(cooldownRaw) : DEFAULT_COOLDOWN_MS;
   const graceMs = Number(opts.graceMs || DEFAULT_GRACE_MS);
   const connectMs = Number(opts.connectMs || DEFAULT_CONNECT_MS);
   const ttsMs = Number(opts.ttsMs || DEFAULT_TTS_MS);
@@ -823,7 +824,9 @@ function createVoiceGreeter(opts = {}) {
             });
             if (startMs == null) startMs = nowFn() - tStart;
             const totalMs = nowFn() - tStart;
-            cooldownUntil.set(cooldownKey(job.userId, job.channelId), nowFn() + cooldownMs);
+            if (cooldownMs > 0) {
+              cooldownUntil.set(cooldownKey(job.userId, job.channelId), nowFn() + cooldownMs);
+            }
             lastPlayStats = {
               userId: job.userId,
               start_ms: startMs,
@@ -974,7 +977,7 @@ function createVoiceGreeter(opts = {}) {
         log(`voice-greet skip user=${userId} old=${oldChannelId || 'none'} new=${newChannelId || 'none'} reason=queue-full`);
         return { ok: false, reason: 'queue-full' };
       }
-      // Cooldown is armed only after a successful play, not when we merely queue.
+      // Cooldown (off by default) is armed only after a successful play, not when we merely queue.
       queuedUsers.add(userId);
       queue.push({
         userId,
