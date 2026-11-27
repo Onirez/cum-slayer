@@ -3,6 +3,7 @@
 const { EventEmitter } = require('events');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const assert = require('assert');
 
@@ -98,6 +99,32 @@ ok(vg.cacheKey('Salut {name}.', 'edge:fr-FR-HenriNeural:-15%:+10%')
 ok(vg.cacheKey('Salut {name}.', edge.cacheVoiceTag())
   !== crypto.createHash('sha1').update('s16le-48k-2:Salut {name}.').digest('hex'),
   'new cache keys do not reuse old Google-only audio');
+
+ok(vg.cacheKey('Salut {name}.', edge.cacheVoiceTag()).length === 40, 'cache key is a sha1 hex');
+ok(
+  vg.buildPrefetchPlan([], {}).total === 0 && vg.buildPrefetchPlan([], {}).missing === 0,
+  'empty prefetch plan is empty',
+);
+{
+  const tmpCache = fs.mkdtempSync(path.join(os.tmpdir(), 'slayer-prefetch-plan-'));
+  const plan = vg.buildPrefetchPlan([
+    { userId: 'b1', name: 'Botty', isBot: true, inVoice: false },
+    { userId: 'r1', name: 'Recent', isBot: false, inVoice: false },
+    { userId: 'v1', name: 'Vocal', isBot: false, inVoice: true },
+  ], { voiceIds: new Set(['v1']), recentIds: new Set(['r1']), cacheDir: tmpCache });
+  ok(plan.members === 3 && plan.total === 90 && plan.missing === 90 && plan.cached === 0, 'plan covers every greeting for every member');
+  ok(plan.jobs[0].userId === 'v1' && plan.jobs[29].userId === 'v1', 'voice members are generated first');
+  ok(plan.jobs[30].userId === 'r1' && plan.jobs[59].userId === 'r1', 'recent members come next');
+  ok(plan.jobs[60].userId === 'b1', 'bots are generated last');
+  const clips = vg.greetingTextsForName('Vocal');
+  ok(clips.length === 30 && clips[0].text.includes('Vocal'), 'greetingTextsForName fills all 30 phrases');
+  fs.writeFileSync(vg.cachedOggPath(plan.jobs[0].text, { cacheDir: tmpCache }), Buffer.alloc(128));
+  const plan2 = vg.buildPrefetchPlan([
+    { userId: 'v1', name: 'Vocal', isBot: false, inVoice: true },
+  ], { voiceIds: new Set(['v1']), cacheDir: tmpCache });
+  ok(plan2.cached === 1 && plan2.missing === 29, 'already-cached ogg clips are skipped');
+  try { fs.rmSync(tmpCache, { recursive: true, force: true }); } catch { /* ignore */ }
+}
 
 
 // greeter wiring with fake TTS/play
@@ -351,6 +378,77 @@ g2._runQueue().then(async () => {
   ok(cdg.heldChannel('g1') == null, 'hold is released after the queue drains');
 
   // leftover tmp files should be deleted
+
+  if (vg.hasFfmpeg()) {
+    const os = require('os');
+    const { spawn } = require('child_process');
+    const preDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slayer-ogg-'));
+    const srcMp3 = path.join(preDir, 'src.mp3');
+    await new Promise((resolve, reject) => {
+      const child = spawn(vg.findFfmpeg(), [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=0.4',
+        '-q:a', '9', srcMp3,
+      ], { stdio: 'ignore' });
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`src mp3 failed code=${code}`))));
+    });
+    const r = await vg.ensureCachedAudio('Salut test prefetch.', {
+      cacheDir: preDir,
+      ttsFn: async (_text, dest) => { fs.copyFileSync(srcMp3, dest); return dest; },
+    });
+    ok(r.format === 'ogg-opus' && r.path.endsWith('.ogg') && fs.existsSync(r.path) && !r.cached, 'builds a compact ogg clip');
+    const r2 = await vg.ensureCachedAudio('Salut test prefetch.', {
+      cacheDir: preDir,
+      ttsFn: async () => { throw new Error('should not call tts when cached'); },
+    });
+    ok(r2.cached && r2.path === r.path && r2.ttsMs === 0 && r2.transcodeMs === 0, 'second call uses the cached ogg without transcode');
+    ok(!fs.existsSync(r.path.slice(0, -4) + '.mp3'), 'mp3 is deleted after the ogg transcode');
+    ok(!fs.existsSync(r.path.slice(0, -4) + '.pcm'), 'pcm is not kept on disk');
+
+    const memberDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slayer-prefetch-'));
+    const prefetchMembers = [{ userId: 'u1', name: 'Testeur', isBot: false, inVoice: true }];
+    const gPre = vg.createVoiceGreeter({
+      enabled: true,
+      prefetchEnabled: true,
+      prefetchGapMs: 20,
+      cacheDir: memberDir,
+      log: () => {},
+      fetchTts: async (_text, dest) => { fs.copyFileSync(srcMp3, dest); return dest; },
+      play: async () => {},
+      getPrefetchMembers: () => prefetchMembers,
+      getRecentUserIds: () => [],
+    });
+    const started = await gPre.startPrefetch();
+    ok(started.ok && started.members === 1 && started.clips === 30, 'prefetch starts for every greeting of a member');
+    const deadline = Date.now() + 40_000;
+    while (gPre._prefetchState().running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    const oggs = fs.readdirSync(memberDir).filter((f) => f.endsWith('.ogg'));
+    ok(oggs.length === 30, `generated 30 ogg clips (${oggs.length})`);
+    ok(!gPre._prefetchState().running, 'prefetch stops when the queue is empty');
+    const names = JSON.parse(fs.readFileSync(path.join(memberDir, 'names.json'), 'utf8'));
+    ok(names.u1 === vg.cleanName('Testeur'), 'names index is persisted on disk');
+
+    prefetchMembers[0] = { userId: 'u1', name: 'Nouveau', isBot: false, inVoice: true };
+    gPre.prefetchMember({ userId: 'u1', name: 'Nouveau', isBot: false }, { front: true });
+    const deadline2 = Date.now() + 40_000;
+    while (gPre._prefetchState().running && Date.now() < deadline2) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    const oggs2 = fs.readdirSync(memberDir).filter((f) => f.endsWith('.ogg'));
+    ok(oggs2.length === 30, `rename replaces old clips instead of stacking them (${oggs2.length})`);
+    const firstOld = vg.cachedOggPath(vg.greetingTextsForName('Testeur')[0].text, { cacheDir: memberDir });
+    const firstNew = vg.cachedOggPath(vg.greetingTextsForName('Nouveau')[0].text, { cacheDir: memberDir });
+    ok(!fs.existsSync(firstOld) && fs.existsSync(firstNew), 'old-name audio is deleted after a display-name change');
+    gPre.shutdown();
+    try { fs.rmSync(preDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(memberDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  } else {
+    ok(true, 'skip ogg transcode tests (no ffmpeg)');
+  }
+
   console.log(`${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
 }).catch((err) => {

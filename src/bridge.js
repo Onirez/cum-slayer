@@ -591,6 +591,45 @@ function sendVoiceStateUpdate(guild, channelId) {
   });
 }
 
+function memberSpeakName(member) {
+  return member?.displayName || member?.user?.globalName || member?.user?.username || 'toi';
+}
+
+function collectPrefetchMembers() {
+  const out = [];
+  for (const guildId of allowedGuilds) {
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) continue;
+    for (const member of guild.members.cache.values()) {
+      out.push({
+        guildId,
+        userId: member.id,
+        name: memberSpeakName(member),
+        isBot: Boolean(member.user?.bot),
+        inVoice: Boolean(guild.voiceStates.cache.get(member.id)?.channelId),
+      });
+    }
+  }
+  return out;
+}
+
+function collectRecentUserIds() {
+  const ids = [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'interactions.json'), 'utf8'));
+    const users = (raw && raw.users && typeof raw.users === 'object') ? raw.users : raw;
+    const entries = Object.entries(users || {}).map(([id, v]) => ({
+      id,
+      last: Number(v && typeof v === 'object' ? (v.last || v.ts || v.at || 0) : v) || 0,
+    }));
+    entries.sort((a, b) => b.last - a.last);
+    for (const e of entries) {
+      if (e.id && e.id !== 'users') ids.push(e.id);
+    }
+  } catch { /* ignore */ }
+  return ids;
+}
+
 const voiceGreeter = voiceGreet.createVoiceGreeter({
   enabled: VOICE_GREET,
   cooldownMs: VOICE_GREET_COOLDOWN_MS,
@@ -613,6 +652,8 @@ const voiceGreeter = voiceGreet.createVoiceGreeter({
   onQueueIdle: () => {
     if (AUTO_VOICE) scheduleAutoVoice('greet-idle');
   },
+  getPrefetchMembers: collectPrefetchMembers,
+  getRecentUserIds: collectRecentUserIds,
 });
 
 function botVoiceChannelId(guild) {
@@ -1107,9 +1148,16 @@ function agentsChannelSummary(c) {
 function onReady(c) {
   if (client._bridgeReadyLogged) return;
   client._bridgeReadyLogged = true;
-  for (const g of c.guilds.cache.values()) {
-    g.members.fetch({ withPresences: true }).then((m) => log(`members fetched guild=${g.id} n=${m.size}`)).catch((e) => log(`members fetch failed guild=${g.id}: ${e.message}`));
-  }
+  const membersReady = Promise.all([...c.guilds.cache.values()].map((g) =>
+    g.members.fetch({ withPresences: true })
+      .then((m) => {
+        log(`members fetched guild=${g.id} n=${m.size}`);
+        return m;
+      })
+      .catch((e) => {
+        log(`members fetch failed guild=${g.id}: ${e.message}`);
+      }),
+  ));
   const user = c.user;
   const guildList = [...c.guilds.cache.values()]
     .map((g) => `${g.name}(${g.id})`)
@@ -1124,9 +1172,15 @@ function onReady(c) {
     log(`auto-voice ready error: ${err.message}`);
   }
   if (VOICE_GREET) {
-    Promise.resolve(voiceGreeter.prewarm()).catch((err) => {
-      log(`voice-greet warn: prewarm: ${err.message}`);
-    });
+    Promise.resolve(voiceGreeter.prewarm())
+      .catch((err) => {
+        log(`voice-greet warn: prewarm: ${err.message}`);
+      })
+      .then(() => membersReady)
+      .then(() => voiceGreeter.startPrefetch())
+      .catch((err) => {
+        log(`voice-greet warn: prefetch: ${err.message}`);
+      });
   }
   try {
     applyDailyPresence('ready');
@@ -1216,6 +1270,39 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     try { voiceGreeter.handleVoiceStateUpdate(oldState, newState); } catch (err) {
       log(`voice-greet warn: ${err.message}`);
     }
+  }
+});
+
+client.on('guildMemberAdd', (member) => {
+  const guildId = member?.guild?.id;
+  if (!VOICE_GREET || !guildId || !allowedGuilds.has(guildId)) return;
+  try {
+    voiceGreeter.prefetchMember({
+      userId: member.id,
+      name: memberSpeakName(member),
+      isBot: Boolean(member.user?.bot),
+      inVoice: Boolean(member.guild.voiceStates.cache.get(member.id)?.channelId),
+    }, { front: true });
+  } catch (err) {
+    log(`voice-greet warn: prefetch join: ${err.message}`);
+  }
+});
+
+client.on('guildMemberUpdate', (oldMember, newMember) => {
+  const guildId = newMember?.guild?.id || oldMember?.guild?.id;
+  if (!VOICE_GREET || !guildId || !allowedGuilds.has(guildId)) return;
+  const oldName = voiceGreet.cleanName(memberSpeakName(oldMember));
+  const newName = voiceGreet.cleanName(memberSpeakName(newMember));
+  if (oldName === newName) return;
+  try {
+    voiceGreeter.prefetchMember({
+      userId: newMember.id,
+      name: memberSpeakName(newMember),
+      isBot: Boolean(newMember.user?.bot),
+      inVoice: Boolean(newMember.guild?.voiceStates?.cache?.get(newMember.id)?.channelId),
+    }, { front: true });
+  } catch (err) {
+    log(`voice-greet warn: prefetch rename: ${err.message}`);
   }
 });
 

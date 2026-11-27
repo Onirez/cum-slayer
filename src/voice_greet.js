@@ -160,7 +160,7 @@ function transcodeToPcm(mp3Path, pcmPath, timeoutMs = 20_000) {
 
 
 function cacheKey(text, tag = edgeTts.cacheVoiceTag()) {
-  return crypto.createHash('sha1').update(`s16le-48k-2:${tag}:${String(text)}`).digest('hex');
+  return crypto.createHash('sha1').update(`ogg-opus-48k:${tag}:${String(text)}`).digest('hex');
 }
 
 function defaultCacheDir() {
@@ -186,6 +186,145 @@ function evictTtsCache(dir, maxEntries = TTS_CACHE_MAX) {
   } catch {
     /* ignore */
   }
+}
+
+function transcodeToOggOpus(srcPath, oggPath, timeoutMs = 20_000) {
+  const bin = findFfmpeg();
+  if (!bin) return Promise.reject(new Error('ffmpeg not found'));
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-loglevel', 'error', '-threads', '1', '-y',
+      '-i', srcPath,
+      '-c:a', 'libopus', '-b:a', '24k', '-ar', '48000', '-ac', '2',
+      '-application', 'voip', '-frame_duration', '20', '-vbr', 'on',
+      oggPath,
+    ];
+    const child = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      reject(new Error('ffmpeg ogg timeout'));
+    }, timeoutMs);
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0 && fs.existsSync(oggPath) && fs.statSync(oggPath).size > 64) resolve(oggPath);
+      else reject(new Error(`ffmpeg ogg failed code=${code} ${stderr.trim()}`.trim()));
+    });
+  });
+}
+
+function cachedOggPath(text, { cacheDir, voiceTag } = {}) {
+  const dir = cacheDir || defaultCacheDir();
+  const clipped = String(text).slice(0, TTS_MAX_CHARS);
+  const key = cacheKey(clipped, voiceTag || edgeTts.cacheVoiceTag());
+  return path.join(dir, `${key}.ogg`);
+}
+
+function hasCachedClip(text, opts = {}) {
+  const pth = cachedOggPath(text, opts);
+  try {
+    return fs.existsSync(pth) && fs.statSync(pth).size > 64;
+  } catch {
+    return false;
+  }
+}
+
+function cacheDirBytes(dir) {
+  let bytes = 0;
+  let files = 0;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.ogg') && !name.endsWith('.mp3') && !name.endsWith('.pcm')) continue;
+      try {
+        bytes += fs.statSync(path.join(dir, name)).size;
+        files += 1;
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return { bytes, files };
+}
+
+function greetingTextsForName(name) {
+  const n = cleanName(name);
+  return GREETINGS.map((tmpl, index) => ({ index, name: n, text: fillPhrase(tmpl, n) }));
+}
+
+function prefetchPriority(member, { voiceIds, recentIds } = {}) {
+  const id = String(member.userId);
+  if (voiceIds && voiceIds.has(id)) return 0;
+  if (recentIds && recentIds.has(id)) return 1;
+  if (!member.isBot) return 2;
+  return 3;
+}
+
+function buildPrefetchPlan(members, { voiceIds, recentIds, cacheDir, voiceTag } = {}) {
+  const list = [...(members || [])].sort((a, b) => {
+    const pa = prefetchPriority(a, { voiceIds, recentIds });
+    const pb = prefetchPriority(b, { voiceIds, recentIds });
+    if (pa !== pb) return pa - pb;
+    return String(a.userId).localeCompare(String(b.userId));
+  });
+  const jobs = [];
+  let cached = 0;
+  for (const member of list) {
+    for (const clip of greetingTextsForName(member.name || member.displayName || '')) {
+      if (hasCachedClip(clip.text, { cacheDir, voiceTag })) cached += 1;
+      else jobs.push({ userId: member.userId, isBot: Boolean(member.isBot), ...clip });
+    }
+  }
+  return {
+    members: list.length,
+    total: list.length * GREETINGS.length,
+    cached,
+    missing: jobs.length,
+    jobs,
+  };
+}
+
+let ttsChain = Promise.resolve();
+function withTtsLock(fn) {
+  const run = ttsChain.then(() => fn(), () => fn());
+  ttsChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function ensureCachedAudio(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TTS_MS, cacheDir, voiceTag } = {}) {
+  const dir = cacheDir || defaultCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const clipped = String(text).slice(0, TTS_MAX_CHARS);
+  const tag = voiceTag || edgeTts.cacheVoiceTag();
+  const key = cacheKey(clipped, tag);
+  const oggPath = path.join(dir, `${key}.ogg`);
+  const mp3Path = path.join(dir, `${key}.mp3`);
+  const pcmPath = path.join(dir, `${key}.pcm`);
+  if (fs.existsSync(oggPath) && fs.statSync(oggPath).size > 64) {
+    try { fs.utimesSync(oggPath, new Date(), new Date()); } catch { /* ignore */ }
+    return { path: oggPath, format: 'ogg-opus', cached: true, ttsMs: 0, transcodeMs: 0, engine: tag.split(':')[0] };
+  }
+  const t0 = Date.now();
+  let engine = tag.split(':')[0] || 'edge';
+  if (!(fs.existsSync(mp3Path) && fs.statSync(mp3Path).size > 64)) {
+    const result = await ttsFn(clipped, mp3Path, ttsMs);
+    if (result && typeof result === 'object' && result.engine) engine = result.engine;
+  }
+  const ttsElapsed = Date.now() - t0;
+  const t1 = Date.now();
+  await transcodeToOggOpus(mp3Path, oggPath);
+  try { fs.unlinkSync(mp3Path); } catch { /* ignore */ }
+  try { fs.unlinkSync(pcmPath); } catch { /* ignore */ }
+  return {
+    path: oggPath,
+    format: 'ogg-opus',
+    cached: false,
+    ttsMs: ttsElapsed,
+    transcodeMs: Date.now() - t1,
+    engine,
+  };
 }
 
 async function ensureCachedPcm(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TTS_MS, cacheDir, voiceTag } = {}) {
@@ -322,6 +461,13 @@ function createVoiceGreeter(opts = {}) {
   let runPromise = null;
   let currentJob = null;
   let voiceLib = null;
+  const prefetchOn = opts.prefetchEnabled !== undefined ? Boolean(opts.prefetchEnabled) : flagOn(process.env.TTS_PREFETCH, 'on');
+  const prefetchGapMs = Number(opts.prefetchGapMs != null ? opts.prefetchGapMs : (process.env.TTS_PREFETCH_GAP_MS || 400));
+  let prefetchStopped = false;
+  let prefetchRunning = false;
+  let prefetchQueue = [];
+  const prefetchQueuedKeys = new Set();
+  const prefetchStats = { generated: 0, failed: 0, startedAt: 0, members: 0, total: 0 };
   hasFfmpeg();
 
   function loadVoiceLib() {
@@ -368,6 +514,7 @@ function createVoiceGreeter(opts = {}) {
   }
 
   function shutdown() {
+    prefetchStopped = true;
     queue.length = 0;
     queuedUsers.clear();
     for (const guildId of [...joinedAt.keys()]) destroyConnection(guildId);
@@ -473,7 +620,7 @@ function createVoiceGreeter(opts = {}) {
     return p;
   }
 
-  async function playOnConnection(guildId, audioPath, { pcm = false, onPlaying } = {}) {
+  async function playOnConnection(guildId, audioPath, { pcm = false, format, onPlaying } = {}) {
     if (typeof playFn === 'function') {
       const start = nowFn();
       const result = await playFn(guildId, audioPath);
@@ -497,6 +644,25 @@ function createVoiceGreeter(opts = {}) {
       }
     }
     if (!connection) throw new Error('no voice connection');
+    const isOgg = format === 'ogg-opus' || (!pcm && audioPath && String(audioPath).endsWith('.ogg'));
+    if (isOgg) {
+      const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      const resource = createAudioResource(fs.createReadStream(audioPath), {
+        inputType: StreamType.OggOpus,
+        silencePaddingFrames: 5,
+      });
+      const subscription = connection.subscribe(player);
+      try {
+        player.play(resource);
+        await entersState(player, AudioPlayerStatus.Playing, 15_000);
+        if (typeof onPlaying === 'function') onPlaying();
+        await entersState(player, AudioPlayerStatus.Idle, playMs);
+      } finally {
+        try { player.stop(true); } catch { /* ignore */ }
+        try { subscription?.unsubscribe(); } catch { /* ignore */ }
+      }
+      return;
+    }
     const pcmPath = pcm ? audioPath : `${audioPath}.pcm`;
     const tempPcm = !pcm;
     try {
@@ -546,14 +712,20 @@ function createVoiceGreeter(opts = {}) {
             // Injected play() (unit tests) still receives the mp3 path.
             const prepareP = typeof playFn === 'function'
               ? ttsFn(job.text, tmp, ttsMs).then(() => ({ path: tmp, pcm: false, cached: false, ttsMs: 0, transcodeMs: 0 }))
-              : ensureCachedPcm(job.text, { ttsFn, ttsMs, cacheDir }).then((r) => ({ path: r.pcmPath, pcm: true, ...r }));
+              : withTtsLock(() => ensureCachedAudio(job.text, { ttsFn, ttsMs, cacheDir })).then((r) => ({
+                path: r.path,
+                pcm: false,
+                format: r.format || 'ogg-opus',
+                ...r,
+              }));
             const [ready, prepared] = await Promise.all([readyP, prepareP]);
             if (!ready) throw new Error('audio not ready');
             await playOnConnection(job.guildId, prepared.path, {
               pcm: prepared.pcm,
+              format: prepared.format,
               onPlaying: () => {
                 startMs = nowFn() - tStart;
-                log(`voice-greet playing user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} tts_ms=${prepared.ttsMs || 0} transcode_ms=${prepared.transcodeMs || 0} cached=${prepared.cached ? 'yes' : 'no'} engine=${prepared.engine || 'n/a'}`);
+                log(`voice-greet playing user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} tts_ms=${prepared.ttsMs || 0} transcode_ms=${prepared.transcodeMs || 0} cached=${prepared.cached ? 'yes' : 'no'} format=${prepared.format || (prepared.pcm ? 'pcm' : 'n/a')} engine=${prepared.engine || 'n/a'}`);
               },
             });
             if (startMs == null) startMs = nowFn() - tStart;
@@ -564,10 +736,12 @@ function createVoiceGreeter(opts = {}) {
               start_ms: startMs,
               total_ms: totalMs,
               cached: Boolean(prepared.cached),
+              format: prepared.format || (prepared.pcm ? 'pcm' : null),
+              engine: prepared.engine || null,
               tts_ms: prepared.ttsMs || 0,
               transcode_ms: prepared.transcodeMs || 0,
             };
-            log(`voice-greet played user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} total_ms=${totalMs} cached=${prepared.cached ? 'yes' : 'no'}`);
+            log(`voice-greet played user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} total_ms=${totalMs} cached=${prepared.cached ? 'yes' : 'no'} format=${prepared.format || (prepared.pcm ? 'pcm' : 'n/a')}`);
           } catch (err) {
             log(`voice-greet warn: play failed user=${job.userId}: ${err.message}`);
           } finally {
@@ -636,10 +810,10 @@ function createVoiceGreeter(opts = {}) {
     });
     const ffmpegMs = Date.now() - t0;
     try {
-      const r = await ensureCachedPcm(TTS_TEST_PHRASE, { ttsFn, ttsMs, cacheDir });
+      const r = await withTtsLock(() => ensureCachedAudio(TTS_TEST_PHRASE, { ttsFn, ttsMs, cacheDir }));
       const vs = edgeTts.voiceSettings();
-      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'} engine=${r.engine || 'edge'} voice=${vs.voice} pitch=${vs.pitch} rate=${vs.rate}`);
-      return { ok: true, ffmpeg_ms: ffmpegMs, tts_ms: r.ttsMs, transcode_ms: r.transcodeMs, cached: r.cached };
+      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'} format=${r.format || 'ogg-opus'} engine=${r.engine || 'edge'} voice=${vs.voice} pitch=${vs.pitch} rate=${vs.rate}`);
+      return { ok: true, ffmpeg_ms: ffmpegMs, tts_ms: r.ttsMs, transcode_ms: r.transcodeMs, cached: r.cached, format: r.format };
     } catch (err) {
       log(`voice-greet warn: prewarm: ${err.message} ffmpeg_ms=${ffmpegMs}`);
       return { ok: false, reason: 'error', ffmpeg_ms: ffmpegMs };
@@ -722,6 +896,169 @@ function createVoiceGreeter(opts = {}) {
     }
   }
 
+
+  function namesIndexPath() {
+    return path.join(cacheDir, 'names.json');
+  }
+
+  function loadNamesIndex() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(namesIndexPath(), 'utf8'));
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveNamesIndex(map) {
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      const dest = namesIndexPath();
+      const tmp = `${dest}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(map));
+      fs.renameSync(tmp, dest);
+    } catch { /* ignore */ }
+  }
+
+  function seedPrefetchQueue() {
+    const members = opts.getPrefetchMembers ? (opts.getPrefetchMembers() || []) : [];
+    const voiceIds = new Set(members.filter((m) => m.inVoice).map((m) => String(m.userId)));
+    const recentIds = new Set((opts.getRecentUserIds ? opts.getRecentUserIds() : []) || []);
+    const plan = buildPrefetchPlan(members, { voiceIds, recentIds, cacheDir });
+    const existing = prefetchQueue.slice();
+    prefetchQueue = [];
+    prefetchQueuedKeys.clear();
+    for (const job of existing.concat(plan.jobs)) {
+      const key = cacheKey(job.text);
+      if (hasCachedClip(job.text, { cacheDir })) continue;
+      if (prefetchQueuedKeys.has(key)) continue;
+      prefetchQueuedKeys.add(key);
+      prefetchQueue.push(job);
+    }
+    prefetchStats.members = plan.members;
+    prefetchStats.total = plan.total;
+    return { ...plan, queued: prefetchQueue.length };
+  }
+
+  function prefetchMember(member, { front = true } = {}) {
+    if (!enabled || !prefetchOn || !member || !member.userId) return { ok: false, reason: 'off' };
+    const name = cleanName(member.name || member.displayName || '');
+    const index = loadNamesIndex();
+    const uid = String(member.userId);
+    const prev = index[uid];
+    if (prev && prev !== name) {
+      const staleKeys = new Set();
+      for (const clip of greetingTextsForName(prev)) {
+        const key = cacheKey(clip.text);
+        staleKeys.add(key);
+        try { fs.unlinkSync(cachedOggPath(clip.text, { cacheDir })); } catch { /* ignore */ }
+        prefetchQueuedKeys.delete(key);
+      }
+      prefetchQueue = prefetchQueue.filter((job) => !staleKeys.has(cacheKey(job.text)));
+      log(`voice-greet prefetch rename user=${uid} old=${prev} new=${name}`);
+    }
+    if (name) {
+      index[uid] = name;
+      saveNamesIndex(index);
+    }
+    let added = 0;
+    const newJobs = [];
+    for (const clip of greetingTextsForName(name)) {
+      const key = cacheKey(clip.text);
+      if (hasCachedClip(clip.text, { cacheDir })) continue;
+      if (prefetchQueuedKeys.has(key)) continue;
+      prefetchQueuedKeys.add(key);
+      newJobs.push({ userId: member.userId, isBot: Boolean(member.isBot), ...clip });
+      added += 1;
+    }
+    if (front) prefetchQueue.unshift(...newJobs);
+    else prefetchQueue.push(...newJobs);
+    if (added) log(`voice-greet prefetch enqueue user=${uid} name=${name} missing=${added} front=${front ? 'yes' : 'no'}`);
+    if (added && !prefetchRunning) {
+      startPrefetch().catch((err) => log(`voice-greet prefetch warn: ${err.message}`));
+    }
+    return { ok: true, added };
+  }
+
+  async function startPrefetch() {
+    if (!enabled || !prefetchOn) return { ok: false, reason: 'off' };
+    if (prefetchRunning) {
+      const seeded = seedPrefetchQueue();
+      return { ok: true, reason: 'already', ...seeded };
+    }
+    prefetchStopped = false;
+    prefetchRunning = true;
+    prefetchStats.startedAt = nowFn();
+    prefetchStats.generated = 0;
+    prefetchStats.failed = 0;
+    const plan = seedPrefetchQueue();
+    const index = loadNamesIndex();
+    const members = opts.getPrefetchMembers ? (opts.getPrefetchMembers() || []) : [];
+    for (const member of members) {
+      const n = cleanName(member.name || member.displayName || '');
+      if (n) index[String(member.userId)] = n;
+    }
+    saveNamesIndex(index);
+    const disk = cacheDirBytes(cacheDir);
+    const etaMs = plan.queued > 0 ? Math.round(plan.queued * (1200 + Math.max(0, prefetchGapMs))) : 0;
+    log(`voice-greet prefetch start members=${plan.members} clips=${plan.total} cached=${plan.cached} missing=${plan.queued} bytes=${disk.bytes} files=${disk.files} gap_ms=${prefetchGapMs} eta_ms=${etaMs}`);
+    const run = (async () => {
+      let lastLog = nowFn();
+      let consecFail = 0;
+      let rescanned = false;
+      try {
+        while (!prefetchStopped) {
+          if (!prefetchQueue.length) {
+            if (!rescanned) {
+              rescanned = true;
+              seedPrefetchQueue();
+              if (prefetchQueue.length) continue;
+            }
+            const diskDone = cacheDirBytes(cacheDir);
+            const elapsed = nowFn() - prefetchStats.startedAt;
+            log(`voice-greet prefetch complete members=${prefetchStats.members} clips=${prefetchStats.total} generated=${prefetchStats.generated} cached=${Math.max(0, prefetchStats.total - prefetchStats.generated - prefetchStats.failed)} failed=${prefetchStats.failed} elapsed_ms=${elapsed} bytes=${diskDone.bytes} files=${diskDone.files}`);
+            break;
+          }
+          if (queue.length || currentJob) {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            continue;
+          }
+          const job = prefetchQueue.shift();
+          if (!job) continue;
+          if (hasCachedClip(job.text, { cacheDir })) continue;
+          try {
+            await withTtsLock(() => ensureCachedAudio(job.text, { ttsFn, ttsMs, cacheDir }));
+            prefetchStats.generated += 1;
+            consecFail = 0;
+            rescanned = false;
+          } catch (err) {
+            prefetchStats.failed += 1;
+            consecFail += 1;
+            log(`voice-greet prefetch warn: user=${job.userId} phrase=${job.index} ${err.message}`);
+            await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, 1500 * consecFail)));
+          }
+          const now = nowFn();
+          if (prefetchStats.generated > 0 && (prefetchStats.generated % 25 === 0 || now - lastLog >= 30_000)) {
+            lastLog = now;
+            const left = prefetchQueue.length;
+            const elapsed = now - prefetchStats.startedAt;
+            const eta = prefetchStats.generated > 0 ? Math.round((elapsed / prefetchStats.generated) * left) : 0;
+            const diskNow = cacheDirBytes(cacheDir);
+            log(`voice-greet prefetch progress generated=${prefetchStats.generated} failed=${prefetchStats.failed} left=${left} elapsed_ms=${elapsed} eta_ms=${eta} bytes=${diskNow.bytes}`);
+          }
+          if (prefetchGapMs > 0) await new Promise((resolve) => setTimeout(resolve, prefetchGapMs));
+        }
+      } finally {
+        prefetchRunning = false;
+      }
+    })();
+    run.catch((err) => {
+      prefetchRunning = false;
+      log(`voice-greet prefetch warn: ${err.message}`);
+    });
+    return { ok: true, members: plan.members, clips: plan.total, cached: plan.cached, missing: plan.queued, eta_ms: etaMs };
+  }
+
   function heldChannel(guildId) {
     if (!guildId) return null;
     if (currentJob && currentJob.guildId === guildId) return currentJob.channelId;
@@ -741,10 +1078,13 @@ function createVoiceGreeter(opts = {}) {
     debugSpeak,
     prewarm,
     heldChannel,
+    startPrefetch,
+    prefetchMember,
     // test helpers
     _queue: queue,
     _cooldownUntil: cooldownUntil,
     _runQueue: runQueue,
+    _prefetchState: () => ({ queue: prefetchQueue, running: prefetchRunning, stopped: prefetchStopped, stats: prefetchStats }),
   };
 }
 
@@ -764,7 +1104,16 @@ module.exports = {
   hasFfmpeg,
   findFfmpeg,
   transcodeToPcm,
+  transcodeToOggOpus,
   ensureCachedPcm,
+  ensureCachedAudio,
+  cachedOggPath,
+  hasCachedClip,
+  cacheDirBytes,
+  greetingTextsForName,
+  prefetchPriority,
+  buildPrefetchPlan,
+  withTtsLock,
   TTS_TEST_PHRASE,
   flagOn,
   createVoiceGreeter,
