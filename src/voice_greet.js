@@ -154,6 +154,125 @@ function hasFfmpeg() {
   return Boolean(bin);
 }
 
+const DEFAULT_OGG_MEM_MAX = 64;
+const DEFAULT_OGG_MEM_BYTES = 1_048_576;
+const OGG_MEM_MAX_FILE = 64 * 1024;
+
+const oggMemCache = new Map();
+let oggMemBytes = 0;
+
+function oggMemLimit() {
+  const n = Number(process.env.TTS_MEM_CACHE_MAX);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_OGG_MEM_MAX;
+}
+
+function oggMemByteLimit() {
+  const n = Number(process.env.TTS_MEM_CACHE_BYTES);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_OGG_MEM_BYTES;
+}
+
+function evictOggMem(incoming = 0) {
+  const maxN = oggMemLimit();
+  const maxB = oggMemByteLimit();
+  while (oggMemCache.size && (maxN <= 0 || oggMemCache.size >= maxN || oggMemBytes + incoming > maxB)) {
+    const first = oggMemCache.keys().next().value;
+    const old = oggMemCache.get(first);
+    oggMemCache.delete(first);
+    oggMemBytes = Math.max(0, oggMemBytes - (old ? old.length : 0));
+    if (maxN <= 0 && !oggMemCache.size) break;
+  }
+}
+
+function rememberOgg(filePath) {
+  const p = String(filePath || '');
+  if (!p) return null;
+  if (oggMemCache.has(p)) {
+    const buf = oggMemCache.get(p);
+    oggMemCache.delete(p);
+    oggMemCache.set(p, buf);
+    return buf;
+  }
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size < 64 || st.size > OGG_MEM_MAX_FILE) return null;
+    const buf = fs.readFileSync(p);
+    if (buf.length > oggMemByteLimit() || oggMemLimit() <= 0) return buf;
+    evictOggMem(buf.length);
+    oggMemCache.set(p, buf);
+    oggMemBytes += buf.length;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+function resetOggMemCache() {
+  oggMemCache.clear();
+  oggMemBytes = 0;
+}
+
+function oggMemStats() {
+  return { entries: oggMemCache.size, bytes: oggMemBytes };
+}
+
+function preloadClipsForName(name, { cacheDir, voiceTag } = {}) {
+  const dir = cacheDir || defaultCacheDir();
+  const tag = voiceTag || edgeTts.cacheVoiceTag();
+  let loaded = 0;
+  for (const clip of greetingTextsForName(name)) {
+    if (rememberOgg(cachedOggPath(clip.text, { cacheDir: dir, voiceTag: tag }))) loaded += 1;
+  }
+  return loaded;
+}
+
+function preloadClipsForMembers(members, { cacheDir, voiceTag } = {}) {
+  let loaded = 0;
+  let people = 0;
+  for (const member of members || []) {
+    if (!member || !member.inVoice) continue;
+    people += 1;
+    loaded += preloadClipsForName(member.name || member.displayName || '', { cacheDir, voiceTag });
+  }
+  return { people, loaded, entries: oggMemCache.size, bytes: oggMemBytes };
+}
+
+function warmAudioPipeline() {
+  // First createAudioResource in @discordjs/voice calls initializeNodes(),
+  // which spawnSyncs `ffmpeg -h` through prism-media's FFmpeg.getInfo().
+  // On the 256MB Fly machine that blocks the event loop for several
+  // seconds. Run it once at prewarm (after an async ffmpeg spawn has
+  // already paged the binary in) so the first greeting does not stall.
+  const t0 = Date.now();
+  hasFfmpeg();
+  let infoMs = 0;
+  let resourceMs = 0;
+  try {
+    const prism = require('prism-media');
+    const tInfo = Date.now();
+    if (prism.FFmpeg && typeof prism.FFmpeg.getInfo === 'function') {
+      prism.FFmpeg.getInfo();
+    }
+    infoMs = Date.now() - tInfo;
+  } catch {
+    /* getInfo may throw if ffmpeg is missing */
+  }
+  try {
+    const voice = require('@discordjs/voice');
+    const tRes = Date.now();
+    const player = voice.createAudioPlayer();
+    const silence = Buffer.alloc(3840);
+    voice.createAudioResource(Readable.from([silence]), {
+      inputType: voice.StreamType.Raw,
+      silencePaddingFrames: 0,
+    });
+    try { player.stop(true); } catch { /* ignore */ }
+    resourceMs = Date.now() - tRes;
+  } catch {
+    /* optional in unit tests without the full voice graph */
+  }
+  return { ms: Date.now() - t0, info_ms: infoMs, resource_ms: resourceMs };
+}
+
 function transcodeToPcm(mp3Path, pcmPath, timeoutMs = 20_000) {
   const bin = findFfmpeg();
   if (!bin) return Promise.reject(new Error('ffmpeg not found'));
@@ -354,7 +473,7 @@ async function ensureCachedAudio(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TT
   const pcmPath = path.join(dir, `${key}.pcm`);
   if (fs.existsSync(oggPath) && fs.statSync(oggPath).size > 64) {
     try { fs.utimesSync(oggPath, new Date(), new Date()); } catch { /* ignore */ }
-    return { path: oggPath, format: 'ogg-opus', cached: true, ttsMs: 0, transcodeMs: 0, engine: tag.split(':')[0] };
+    return { path: oggPath, format: 'ogg-opus', cached: true, ttsMs: 0, transcodeMs: 0, engine: tag.split(':')[0], buffer: rememberOgg(oggPath) || undefined };
   }
   const t0 = Date.now();
   let engine = tag.split(':')[0] || 'edge';
@@ -374,6 +493,7 @@ async function ensureCachedAudio(text, { ttsFn = fetchTtsMp3, ttsMs = DEFAULT_TT
     ttsMs: ttsElapsed,
     transcodeMs: Date.now() - t1,
     engine,
+    buffer: rememberOgg(oggPath) || undefined,
   };
 }
 
@@ -704,7 +824,7 @@ function createVoiceGreeter(opts = {}) {
     return p;
   }
 
-  async function playOnConnection(guildId, audioPath, { pcm = false, format, pcmStream, idleMs, onPlaying } = {}) {
+  async function playOnConnection(guildId, audioPath, { pcm = false, format, pcmStream, idleMs, onPlaying, buffer } = {}) {
     if (typeof playFn === 'function') {
       const start = nowFn();
       const result = await playFn(guildId, audioPath);
@@ -750,7 +870,11 @@ function createVoiceGreeter(opts = {}) {
     const isOgg = format === 'ogg-opus' || (!pcm && audioPath && String(audioPath).endsWith('.ogg'));
     if (isOgg) {
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-      const resource = createAudioResource(fs.createReadStream(audioPath), {
+      const oggBuf = (buffer && buffer.length > 64) ? buffer : rememberOgg(audioPath);
+      const oggStream = oggBuf
+        ? Readable.from(oggBuf, { highWaterMark: 4096 })
+        : fs.createReadStream(audioPath, { highWaterMark: 4096 });
+      const resource = createAudioResource(oggStream, {
         inputType: StreamType.OggOpus,
         silencePaddingFrames: 5,
       });
@@ -862,6 +986,7 @@ function createVoiceGreeter(opts = {}) {
             await playOnConnection(job.guildId, prepared.path, {
               pcm: prepared.pcm,
               format: prepared.format,
+              buffer: prepared.buffer,
               onPlaying: () => {
                 startMs = nowFn() - tStart;
                 log(`voice-greet playing user=${job.userId} bot=${job.isBot ? 'yes' : 'no'} start_ms=${startMs} tts_ms=${prepared.ttsMs || 0} transcode_ms=${prepared.transcodeMs || 0} cached=${prepared.cached ? 'yes' : 'no'} format=${prepared.format || (prepared.pcm ? 'pcm' : 'n/a')} engine=${prepared.engine || 'n/a'}`);
@@ -951,6 +1076,7 @@ function createVoiceGreeter(opts = {}) {
       child.on('error', done);
     });
     const ffmpegMs = Date.now() - t0;
+    const pipeline = warmAudioPipeline();
     try {
       const wipe = wipeStaleTtsCache(cacheDir);
       if (wipe.wiped) {
@@ -958,11 +1084,11 @@ function createVoiceGreeter(opts = {}) {
       }
       const r = await withTtsLock(() => ensureCachedAudio(TTS_TEST_PHRASE, { ttsFn, ttsMs, cacheDir }));
       const vs = edgeTts.voiceSettings();
-      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'} format=${r.format || 'ogg-opus'} engine=${r.engine || 'edge'} voice=${vs.voice} pitch=${vs.pitch} rate=${vs.rate}`);
-      return { ok: true, ffmpeg_ms: ffmpegMs, tts_ms: r.ttsMs, transcode_ms: r.transcodeMs, cached: r.cached, format: r.format };
+      log(`voice-greet prewarm ready ffmpeg_ms=${ffmpegMs} pipeline_ms=${pipeline.ms} info_ms=${pipeline.info_ms} resource_ms=${pipeline.resource_ms} tts_ms=${r.ttsMs} transcode_ms=${r.transcodeMs} cached=${r.cached ? 'yes' : 'no'} format=${r.format || 'ogg-opus'} engine=${r.engine || 'edge'} voice=${vs.voice} pitch=${vs.pitch} rate=${vs.rate}`);
+      return { ok: true, ffmpeg_ms: ffmpegMs, pipeline_ms: pipeline.ms, tts_ms: r.ttsMs, transcode_ms: r.transcodeMs, cached: r.cached, format: r.format };
     } catch (err) {
-      log(`voice-greet warn: prewarm: ${err.message} ffmpeg_ms=${ffmpegMs}`);
-      return { ok: false, reason: 'error', ffmpeg_ms: ffmpegMs };
+      log(`voice-greet warn: prewarm: ${err.message} ffmpeg_ms=${ffmpegMs} pipeline_ms=${pipeline.ms}`);
+      return { ok: false, reason: 'error', ffmpeg_ms: ffmpegMs, pipeline_ms: pipeline.ms };
     }
   }
 
@@ -1157,6 +1283,10 @@ function createVoiceGreeter(opts = {}) {
     const disk = cacheDirBytes(cacheDir);
     const etaMs = plan.queued > 0 ? Math.round(plan.queued * (1200 + Math.max(0, prefetchGapMs))) : 0;
     log(`voice-greet prefetch start members=${plan.members} clips=${plan.total} cached=${plan.cached} missing=${plan.queued} bytes=${disk.bytes} files=${disk.files} gap_ms=${prefetchGapMs} eta_ms=${etaMs}`);
+    const memStart = preloadClipsForMembers(members, { cacheDir });
+    if (memStart.people) {
+      log(`voice-greet mem-preload people=${memStart.people} loaded=${memStart.loaded} entries=${memStart.entries} bytes=${memStart.bytes}`);
+    }
     const run = (async () => {
       let lastLog = nowFn();
       let consecFail = 0;
@@ -1172,6 +1302,11 @@ function createVoiceGreeter(opts = {}) {
             const diskDone = cacheDirBytes(cacheDir);
             const elapsed = nowFn() - prefetchStats.startedAt;
             log(`voice-greet prefetch complete members=${prefetchStats.members} clips=${prefetchStats.total} generated=${prefetchStats.generated} cached=${Math.max(0, prefetchStats.total - prefetchStats.generated - prefetchStats.failed)} failed=${prefetchStats.failed} elapsed_ms=${elapsed} bytes=${diskDone.bytes} files=${diskDone.files}`);
+            const live = opts.getPrefetchMembers ? (opts.getPrefetchMembers() || []) : members;
+            const memDone = preloadClipsForMembers(live, { cacheDir });
+            if (memDone.people) {
+              log(`voice-greet mem-preload people=${memDone.people} loaded=${memDone.loaded} entries=${memDone.entries} bytes=${memDone.bytes}`);
+            }
             break;
           }
           if (queue.length || currentJob) {
@@ -1236,6 +1371,7 @@ function createVoiceGreeter(opts = {}) {
     heldChannel,
     startPrefetch,
     prefetchMember,
+    preloadInVoice: () => preloadClipsForMembers(opts.getPrefetchMembers ? (opts.getPrefetchMembers() || []) : [], { cacheDir }),
     // test helpers
     _queue: queue,
     _cooldownUntil: cooldownUntil,
@@ -1275,5 +1411,11 @@ module.exports = {
   wipeStaleTtsCache,
   TTS_TEST_PHRASE,
   flagOn,
+  rememberOgg,
+  resetOggMemCache,
+  oggMemStats,
+  preloadClipsForName,
+  preloadClipsForMembers,
+  warmAudioPipeline,
   createVoiceGreeter,
 };

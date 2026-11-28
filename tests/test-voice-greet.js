@@ -613,6 +613,51 @@ g2._runQueue().then(async () => {
     ok(true, 'skip ogg transcode tests (no ffmpeg)');
   }
 
+  // In-memory ogg preload and audio-pipeline warm-up (first play must not
+  // block the event loop on prism-media's spawnSync `ffmpeg -h`).
+  vg.resetOggMemCache();
+  const memDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-oggmem-'));
+  const tiny = path.join(memDir, 'tiny.ogg');
+  const aPath = path.join(memDir, 'a.ogg');
+  const bPath = path.join(memDir, 'b.ogg');
+  fs.writeFileSync(tiny, Buffer.alloc(32, 1));
+  fs.writeFileSync(aPath, Buffer.alloc(128, 2));
+  fs.writeFileSync(bPath, Buffer.alloc(128, 3));
+  ok(vg.rememberOgg(tiny) == null, 'skips ogg files smaller than 64 bytes');
+  ok(vg.rememberOgg(aPath).length === 128, 'loads a cached ogg into memory');
+  ok(vg.oggMemStats().entries === 1 && vg.oggMemStats().bytes === 128, 'mem cache accounts for the loaded clip');
+  const prevMax = process.env.TTS_MEM_CACHE_MAX;
+  process.env.TTS_MEM_CACHE_MAX = '1';
+  vg.rememberOgg(bPath);
+  ok(vg.oggMemStats().entries === 1 && vg.oggMemStats().bytes === 128, 'evicts the oldest clip when over the entry bound');
+  if (prevMax == null) delete process.env.TTS_MEM_CACHE_MAX;
+  else process.env.TTS_MEM_CACHE_MAX = prevMax;
+  vg.resetOggMemCache();
+  const aliceClips = vg.greetingTextsForName('AliceMem');
+  const bobClips = vg.greetingTextsForName('BobMem');
+  for (const clip of aliceClips) {
+    fs.writeFileSync(vg.cachedOggPath(clip.text, { cacheDir: memDir }), Buffer.alloc(200, 7));
+  }
+  for (const clip of bobClips) {
+    fs.writeFileSync(vg.cachedOggPath(clip.text, { cacheDir: memDir }), Buffer.alloc(200, 8));
+  }
+  const pre = vg.preloadClipsForMembers([
+    { userId: '1', name: 'AliceMem', inVoice: true },
+    { userId: '2', name: 'BobMem', inVoice: false },
+  ], { cacheDir: memDir });
+  ok(pre.people === 1 && pre.loaded === 30, 'preloads every clip of members currently in voice, not the others');
+  ok(pre.entries === 30 && pre.bytes === 30 * 200, 'in-voice preload stays within the memory bound');
+  const hit = await vg.ensureCachedAudio(aliceClips[0].text, {
+    cacheDir: memDir,
+    ttsFn: async () => { throw new Error('should be a cache hit'); },
+  });
+  ok(hit.cached === true && hit.buffer && hit.buffer.length === 200, 'cache hit returns the in-memory ogg buffer');
+  const warm = vg.warmAudioPipeline();
+  ok(typeof warm.ms === 'number' && warm.ms >= 0, 'warmAudioPipeline returns a timing');
+  ok(typeof warm.info_ms === 'number' && typeof warm.resource_ms === 'number', 'warmAudioPipeline reports info and resource steps');
+  vg.resetOggMemCache();
+  try { fs.rmSync(memDir, { recursive: true, force: true }); } catch { /* ignore */ }
+
   console.log(`${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
 }).catch((err) => {
