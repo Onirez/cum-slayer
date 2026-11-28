@@ -80,6 +80,7 @@ const AUTO_VOICE = config.AUTO_VOICE;
 const AUTO_VOICE_DEBOUNCE_MS = config.AUTO_VOICE_DEBOUNCE_MS;
 const AUTO_VOICE_RESYNC_MS = config.AUTO_VOICE_RESYNC_MS;
 const AUTO_VOICE_RETURN_MS = config.AUTO_VOICE_RETURN_MS;
+const AUTO_VOICE_LEAVE_RETURN_MS = config.AUTO_VOICE_LEAVE_RETURN_MS;
 const VOICE_GREET = config.VOICE_GREET;
 const VOICE_GREET_COOLDOWN_MS = config.VOICE_GREET_COOLDOWN_MS;
 const VOICE_GREET_GRACE_MS = config.VOICE_GREET_GRACE_MS;
@@ -654,7 +655,13 @@ const voiceGreeter = voiceGreet.createVoiceGreeter({
   },
   sendVoiceStateUpdate,
   onQueueIdle: () => {
-    if (AUTO_VOICE) scheduleAutoVoice('greet-idle');
+    if (!AUTO_VOICE) return;
+    let scheduled = false;
+    for (const guildId of allowedGuilds) {
+      const guild = client.guilds.cache.get(guildId);
+      if (guild && handleUserLeftVoice(guild, 'greet-idle')) scheduled = true;
+    }
+    if (!scheduled) scheduleAutoVoice('greet-idle');
   },
   onDisconnected: (guildId) => {
     if (!AUTO_VOICE) return;
@@ -903,9 +910,10 @@ function isBotInitiatedVoiceChange(guild, newChannelId) {
   return Boolean(held && held === newChannelId);
 }
 
-function scheduleAutoVoiceReturn(guild, reason) {
+function scheduleAutoVoiceReturn(guild, reason, delayMs = AUTO_VOICE_RETURN_MS) {
   const prev = autoVoiceReturnTimers.get(guild.id);
   if (prev) clearTimeout(prev);
+  const wait = Number.isFinite(Number(delayMs)) ? Number(delayMs) : AUTO_VOICE_RETURN_MS;
   const timer = setTimeout(() => {
     autoVoiceReturnTimers.delete(guild.id);
     try {
@@ -913,7 +921,7 @@ function scheduleAutoVoiceReturn(guild, reason) {
     } catch (err) {
       log(`auto-voice return error guild=${guild.id} reason=${reason}: ${err.message}`);
     }
-  }, AUTO_VOICE_RETURN_MS);
+  }, wait);
   if (typeof timer.unref === 'function') timer.unref();
   autoVoiceReturnTimers.set(guild.id, timer);
 }
@@ -936,6 +944,33 @@ function handleBotVoiceDisplacement(guild, destChannelId, source) {
     `auto-voice return scheduled guild=${guild.id} from=${from} to=${decision.targetId} humans=${pick.targetCount} reason=${decision.reason} source=${source} in_ms=${AUTO_VOICE_RETURN_MS} counts=${formatVoiceCounts(guild, pick.counts)}`,
   );
   scheduleAutoVoiceReturn(guild, decision.reason);
+  return true;
+}
+
+function handleUserLeftVoice(guild, source) {
+  if (!guild || !AUTO_VOICE) return false;
+  const pick = pickTargetChannel(guild);
+  const held = typeof voiceGreeter.heldChannel === 'function' ? voiceGreeter.heldChannel(guild.id) : null;
+  const decision = autoVoicePolicy.decideAfterUserLeave({
+    botChannelId: pick.currentId,
+    currentHumans: pick.currentCount,
+    targetId: pick.targetId,
+    targetHumans: pick.targetCount,
+    greetHoldChannelId: held,
+    trigger: source === 'greet-idle' ? 'idle' : 'leave',
+  });
+  if (decision.action === 'hold') {
+    log(
+      `auto-voice return held guild=${guild.id} stay=${held} target=${decision.targetId || pick.targetId || 'none'} reason=${decision.reason} source=${source} counts=${formatVoiceCounts(guild, pick.counts)}`,
+    );
+    return false;
+  }
+  if (decision.action !== 'return') return false;
+  const from = pick.currentId || 'none';
+  log(
+    `auto-voice return scheduled guild=${guild.id} from=${from} to=${decision.targetId} humans=${pick.targetCount} reason=${decision.reason} source=${source} in_ms=${AUTO_VOICE_LEAVE_RETURN_MS} counts=${formatVoiceCounts(guild, pick.counts)}`,
+  );
+  scheduleAutoVoiceReturn(guild, decision.reason, AUTO_VOICE_LEAVE_RETURN_MS);
   return true;
 }
 
@@ -1326,8 +1361,8 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   if (AUTO_VOICE) {
     const botId = client.user?.id;
     const memberId = newState.id || oldState.id;
+    const guild = newState.guild || oldState.guild;
     if (botId && memberId === botId && (oldState.channelId || null) !== (newState.channelId || null)) {
-      const guild = newState.guild || oldState.guild;
       if (guild) handleBotVoiceDisplacement(guild, newState.channelId || null, 'voiceStateUpdate');
     }
     scheduleAutoVoice('voiceStateUpdate');
@@ -1335,6 +1370,18 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   if (VOICE_GREET) {
     try { voiceGreeter.handleVoiceStateUpdate(oldState, newState); } catch (err) {
       log(`voice-greet warn: ${err.message}`);
+    }
+  }
+  if (AUTO_VOICE) {
+    const botId = client.user?.id;
+    const memberId = newState.id || oldState.id;
+    const guild = newState.guild || oldState.guild;
+    const oldChannelId = oldState.channelId || null;
+    const newChannelId = newState.channelId || null;
+    if (guild && botId && memberId && memberId !== botId && oldChannelId && oldChannelId !== newChannelId) {
+      if (oldChannelId === botVoiceChannelId(guild)) {
+        handleUserLeftVoice(guild, 'voiceStateUpdate');
+      }
     }
   }
 });

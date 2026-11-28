@@ -28,6 +28,7 @@ Sans les deux variables de webhook, le pont se connecte quand même à Discord, 
 | `AUTO_VOICE` | `on` | Rejoindre le vocal le plus rempli |
 | `AUTO_VOICE_DEBOUNCE_MS` | `5000` | Debounce des resync auto-vocal (join/leave d’utilisateurs) |
 | `AUTO_VOICE_RETURN_MS` | `1000` | Délai pour revenir dans le salon le plus rempli après un déplacement forcé vers un salon vide, ou un kick |
+| `AUTO_VOICE_LEAVE_RETURN_MS` | `400` | Délai pour revenir dans le salon le plus rempli après qu’une personne (souvent tout juste saluée) quitte le salon du bot, ou à la fin de la file de saluts s’il est resté seul |
 | `VOICE_GREET` | `on` | Saluer à voix haute ceux qui rejoignent le salon du bot |
 | `VOICE_GREET_COOLDOWN_MS` | `0` | Cooldown entre deux saluts d’une même personne et un même salon (0 = désactivé, chaque join/move est salué) |
 | `VOICE_GREET_GRACE_MS` | `8000` | Ne pas saluer juste après que le bot ait lui-même rejoint |
